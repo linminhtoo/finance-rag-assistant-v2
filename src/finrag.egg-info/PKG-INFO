@@ -1,0 +1,38 @@
+Metadata-Version: 2.4
+Name: finrag
+Version: 0.1.0
+Summary: Add your description here
+Requires-Python: >=3.12
+Requires-Dist: docling
+Requires-Dist: fastapi>=0.115.14
+Requires-Dist: httpx>=0.28.1
+Requires-Dist: huggingface-hub
+Requires-Dist: judgy>=0.1.0
+Requires-Dist: loguru
+Requires-Dist: matplotlib>=3.10.3
+Requires-Dist: mistralai
+Requires-Dist: numpy>=2.3.1
+Requires-Dist: openai
+Requires-Dist: pandas>=2.3.0
+Requires-Dist: pydantic>=2.11.7
+Requires-Dist: python-dotenv>=1.1.1
+Requires-Dist: python-fasthtml
+Requires-Dist: qdrant-client
+Requires-Dist: rank-bm25>=0.2.2
+Requires-Dist: scikit-learn>=1.7.0
+Requires-Dist: seaborn>=0.13.2
+Requires-Dist: sentence-transformers
+Requires-Dist: tqdm>=4.67.1
+Requires-Dist: uvicorn>=0.35.0
+Provides-Extra: dev
+Requires-Dist: jupyter; extra == "dev"
+Requires-Dist: notebook; extra == "dev"
+Requires-Dist: ruff>=0.11.2; extra == "dev"
+Requires-Dist: pre-commit>=3.4; extra == "dev"
+Requires-Dist: finrag[test]; extra == "dev"
+Provides-Extra: test
+Requires-Dist: uv; extra == "test"
+Requires-Dist: pytest>=7.4; extra == "test"
+Requires-Dist: pytest-cov>=4.1.0; extra == "test"
+Requires-Dist: pytest-xdist>=3.5; extra == "test"
+Requires-Dist: tox>=4.11; extra == "test"

@@ -1,0 +1,41 @@
+# See https://pre-commit.com/hooks.html for more hooks
+default_install_hook_types: [pre-commit, pre-push]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      # General-purpose hooks
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args:
+          # .gitlab-ci.yml contains the "!reference" tag, which is GitLab CI-specific.
+          - --unsafe
+      - id: check-added-large-files # Default maximum is 500 kB
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    # Ruff version.
+    rev: v0.11.2
+    hooks:
+      # Run the linter.
+      - id: ruff
+        name: ruff check
+        language: system
+        args: [ --config=pyproject.toml, --fix ]
+
+      # Run the formatter.
+      - id: ruff-format
+        name: ruff format
+        language: system
+
+  - repo: local
+    hooks:
+      # Unit tests
+      - id: run-tests
+        name: run tests
+        entry: tox
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

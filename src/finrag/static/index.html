@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Gov RAG Demo</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; background: #f5f5f7; }
+    header { background: #111827; color: white; padding: 1rem 2rem; }
+    main { padding: 2rem; max-width: 960px; margin: 0 auto; }
+    h1 { margin: 0; font-size: 1.6rem; }
+    .card { background: white; border-radius: 0.75rem; padding: 1.5rem; margin-bottom: 1.5rem; box-shadow: 0 10px 25px rgba(0,0,0,0.05); }
+    label { font-weight: 600; display: block; margin-bottom: 0.5rem; }
+    input[type="file"], textarea { width: 100%; margin-bottom: 0.75rem; }
+    textarea { min-height: 120px; padding: 0.5rem; font-family: inherit; }
+    button { background: #2563eb; color: white; border: none; padding: 0.6rem 1.2rem; border-radius: 999px; cursor: pointer; font-weight: 600; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    .checkbox-row { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.75rem; }
+    .status { font-size: 0.9rem; color: #4b5563; margin-top: 0.5rem; }
+    pre { background: #111827; color: #e5e7eb; padding: 1rem; border-radius: 0.5rem; overflow-x: auto; font-size: 0.9rem; }
+    .answer { white-space: pre-wrap; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
+    .chip { font-size: 0.8rem; padding: 0.2rem 0.5rem; border-radius: 999px; background: #e5e7eb; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Gov RAG Demo (Mistral + Docling + Qdrant)</h1>
+  </header>
+  <main>
+    <section class="card">
+      <h2>1. Ingest PDF</h2>
+      <form id="ingestForm">
+        <label for="pdfFile">PDF file</label>
+        <input id="pdfFile" name="file" type="file" accept="application/pdf" required />
+
+        <div class="checkbox-row">
+          <input id="ocrToggle" name="use_mistral_ocr" type="checkbox" />
+          <label for="ocrToggle" style="margin: 0;">Use Mistral OCR</label>
+        </div>
+
+        <button type="submit" id="ingestBtn">Ingest document</button>
+        <div class="status" id="ingestStatus"></div>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2>2. Ask a question</h2>
+      <form id="queryForm">
+        <label for="question">Question</label>
+        <textarea id="question" name="question" placeholder="e.g. What are the eligibility criteria for scheme X?"></textarea>
+        <button type="submit" id="queryBtn">Ask</button>
+        <div class="status" id="queryStatus"></div>
+      </form>
+      <div id="answerBlock" style="display:none; margin-top: 1rem;">
+        <h3>Answer</h3>
+        <div class="answer" id="finalAnswer"></div>
+        <h4 style="margin-top: 1rem;">Top context chunks</h4>
+        <div id="chunks"></div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const ingestForm = document.getElementById('ingestForm');
+    const ingestStatus = document.getElementById('ingestStatus');
+    const ingestBtn = document.getElementById('ingestBtn');
+
+    ingestForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fileInput = document.getElementById('pdfFile');
+      if (!fileInput.files.length) {
+        ingestStatus.textContent = "Please select a PDF first.";
+        return;
+      }
+      const useOcr = document.getElementById('ocrToggle').checked;
+
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('use_mistral_ocr', useOcr ? 'true' : 'false');
+
+      ingestBtn.disabled = true;
+      ingestStatus.textContent = "Uploading & ingesting…";
+
+      try {
+        const res = await fetch('/ingest', {
+          method: 'POST',
+          body: formData,
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        ingestStatus.textContent = "Ingested doc_id=" + data.doc_id;
+      } catch (err) {
+        console.error(err);
+        ingestStatus.textContent = "Error ingesting: " + err;
+      } finally {
+        ingestBtn.disabled = false;
+      }
+    });
+
+    const queryForm = document.getElementById('queryForm');
+    const queryStatus = document.getElementById('queryStatus');
+    const queryBtn = document.getElementById('queryBtn');
+    const answerBlock = document.getElementById('answerBlock');
+    const finalAnswer = document.getElementById('finalAnswer');
+    const chunksDiv = document.getElementById('chunks');
+
+    queryForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const q = document.getElementById('question').value.trim();
+      if (!q) {
+        queryStatus.textContent = "Please enter a question.";
+        return;
+      }
+      queryBtn.disabled = true;
+      queryStatus.textContent = "Retrieving & generating answer…";
+
+      try {
+        const res = await fetch('/query', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: q }),
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        answerBlock.style.display = 'block';
+        finalAnswer.textContent = data.final_answer;
+
+        chunksDiv.innerHTML = '';
+        (data.top_chunks || []).forEach((c, idx) => {
+          const div = document.createElement('div');
+          div.style.marginBottom = '0.75rem';
+          div.innerHTML = `
+            <div class="chips">
+              <span class="chip">#${idx+1}</span>
+              <span class="chip">doc=${c.doc_id}</span>
+              <span class="chip">page=${c.page_no ?? 'n/a'}</span>
+              <span class="chip">score=${c.score.toFixed(3)}</span>
+            </div>
+            <div style="font-size:0.9rem; color:#374151; margin-top:0.25rem;">
+              <strong>${(c.headings || []).join(" › ")}</strong><br/>
+              ${c.preview.replace(/</g, "&lt;").replace(/>/g, "&gt;")}…
+            </div>
+          `;
+          chunksDiv.appendChild(div);
+        });
+
+        queryStatus.textContent = "";
+      } catch (err) {
+        console.error(err);
+        queryStatus.textContent = "Error querying: " + err;
+      } finally {
+        queryBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
