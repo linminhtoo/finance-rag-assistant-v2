@@ -5,6 +5,8 @@ from typing import List, Optional
 from mistralai import Mistral
 from mistralai.models.documenturlchunk import DocumentURLChunkTypedDict
 
+from finrag.utils import get_env_var
+
 DEFAULT_PAGE_SEP = "\n\n<!-- PAGE BREAK -->\n\n"
 
 
@@ -14,9 +16,7 @@ class MistralOCRClient:
     """
 
     def __init__(self, api_key: Optional[str] = None, model: str = "mistral-ocr-latest"):
-        self.api_key = api_key or os.getenv("MISTRAL_API_KEY")
-        if not self.api_key:
-            raise ValueError("MISTRAL_API_KEY is not set")
+        self.api_key = api_key or get_env_var("MISTRAL_API_KEY")
         self.client = Mistral(api_key=self.api_key)
         self.model = model
 
