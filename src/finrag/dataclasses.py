@@ -15,7 +15,7 @@ class DocChunk:
     # page_no: Optional[int]
     headings: list[str]
     source: str  # original file/URL
-    # you can add more metadata fields as needed (section path, captions, etc.)
+    # add more metadata fields as needed (section path, captions, etc.)
 
     def as_payload(self) -> dict:
         return {

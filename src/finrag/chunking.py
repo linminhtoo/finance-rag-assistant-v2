@@ -45,7 +45,7 @@ class DoclingHybridChunker:
         )
 
         self.max_tokens = max_tokens
-        self.overlap_tokens = overlap_tokens  # if you want to use overlap, you can pass it through options
+        self.overlap_tokens = overlap_tokens
 
         self.use_mistral_ocr = use_mistral_ocr
         self.mistral_ocr_client = mistral_ocr_client or MistralOCRClient()
@@ -76,8 +76,9 @@ class DoclingHybridChunker:
             conv_result = self.converter.convert(source=tmp_path)
             return conv_result.document
         finally:
-            # For a production pipeline you might want to keep these or write into
-            # an object store instead; for now we clean up.
+            # For a production pipeline we might want to keep these, or
+            # write into an object store instead.
+            # for now we clean up.
             try:
                 os.remove(tmp_path)
             except OSError:

@@ -382,8 +382,3 @@ with open(HTML_PATH, "r") as f:
 @app.get("/", response_class=HTMLResponse)
 def index():
     return HTML_PAGE
-
-
-# If you want to run with `python app.py`
-if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
