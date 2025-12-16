@@ -81,14 +81,17 @@ class HybridRetriever:
     def __init__(
         self,
         mistral: MistralClientWrapper,
+        storage_path: str,
         collection_name: str = "rag_chunks",
         vector_dim: int = 1024,
     ):
+        # TODO: allow swap to OpenAI client
         self.mistral = mistral
         self.collection_name = collection_name
 
         # For a real deployment, point to external Qdrant (e.g. http://qdrant:6333)
-        self.qdrant = QdrantClient(":memory:")
+        self.storage_path = storage_path
+        self.qdrant = QdrantClient(path=storage_path)  # ":memory:" also works
 
         if not self.qdrant.collection_exists(collection_name):
             self.qdrant.create_collection(
@@ -397,7 +400,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-rag_service = RAGService()
+# TODO: add Langsmith tracing
+rag_service = RAGService(storage_path=get_env_var("QDRANT_STORAGE_PATH"))
 
 
 class QueryRequest(BaseModel):
