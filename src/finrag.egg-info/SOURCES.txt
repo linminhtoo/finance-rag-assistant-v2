@@ -1,7 +1,0 @@
-pyproject.toml
-src/finrag/main.py
-src/finrag.egg-info/PKG-INFO
-src/finrag.egg-info/SOURCES.txt
-src/finrag.egg-info/dependency_links.txt
-src/finrag.egg-info/requires.txt
-src/finrag.egg-info/top_level.txt
