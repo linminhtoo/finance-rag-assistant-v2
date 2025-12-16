@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
-import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
