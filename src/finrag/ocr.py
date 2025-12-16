@@ -12,11 +12,8 @@ class MistralOCRClient:
     """
     Thin wrapper around Mistral OCR that turns a PDF into a single Markdown string.
     """
-    def __init__(
-        self,
-        api_key: Optional[str] = None,
-        model: str = "mistral-ocr-latest",
-    ):
+
+    def __init__(self, api_key: Optional[str] = None, model: str = "mistral-ocr-latest"):
         self.api_key = api_key or os.getenv("MISTRAL_API_KEY")
         if not self.api_key:
             raise ValueError("MISTRAL_API_KEY is not set")
@@ -44,7 +41,6 @@ class MistralOCRClient:
         )
         return [page.markdown for page in ocr_response.pages]
 
-    def pdf_to_markdown(self, source: str, 
-                        page_separator: str = DEFAULT_PAGE_SEP) -> str:
+    def pdf_to_markdown(self, source: str, page_separator: str = DEFAULT_PAGE_SEP) -> str:
         pages = self.pdf_to_markdown_pages(source)
         return page_separator.join(pages)

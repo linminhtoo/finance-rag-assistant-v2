@@ -8,6 +8,7 @@ class DocChunk:
 
     TODO: describe Attributes
     """
+
     id: str
     doc_id: str
     text: str
@@ -29,10 +30,11 @@ class DocChunk:
 class ScoredChunk:
     """
     A document chunk with an associated relevance score.
-    
+
     TODO: describe Attributes
     """
+
     chunk: DocChunk
     score: float
-    # TODO: define Enum ? 
+    # TODO: define Enum ?
     source: str  # "hybrid" or "reranker"

@@ -25,6 +25,7 @@ from finrag.utils import get_env_var
 # Mistral client wrapper (embeddings + chat)
 # -------------------------------------------------------------------
 
+
 class MistralClientWrapper:
     def __init__(
         self,
@@ -40,25 +41,17 @@ class MistralClientWrapper:
         self.embed_model = embed_model
 
     def embed_texts(self, texts: list[str]) -> np.ndarray:
-        resp = self.client.embeddings.create(
-            model=self.embed_model,
-            inputs=texts,
-        )
+        resp = self.client.embeddings.create(model=self.embed_model, inputs=texts)
         vectors = [np.array(d.embedding, dtype=np.float32) for d in resp.data]
         return np.vstack(vectors)
 
     def chat(self, messages: list[MessagesTypedDict], temperature: float = 0.1) -> str:
-        res = self.client.chat.complete(
-            model=self.chat_model,
-            messages=messages,
-            temperature=temperature,
-            stream=False,
-        )
+        res = self.client.chat.complete(model=self.chat_model, messages=messages, temperature=temperature, stream=False)
         try:
             return res.choices[0].message.content  # type: ignore
         except Exception as e:
             raise RuntimeError(f"Failed to get chat response: {e}") from e
-    
+
     # not used. just experimenting.
     # def structured_chat(
     #     self,
@@ -80,7 +73,6 @@ class MistralClientWrapper:
 # -------------------------------------------------------------------
 
 
-
 class HybridRetriever:
     def __init__(
         self,
@@ -99,11 +91,7 @@ class HybridRetriever:
 
         if not self.qdrant.collection_exists(collection_name):
             self.qdrant.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=vector_dim,
-                    distance=Distance.COSINE,
-                ),
+                collection_name=collection_name, vectors_config=VectorParams(size=vector_dim, distance=Distance.COSINE)
             )
 
         self.chunks_by_id: dict[str, DocChunk] = {}
@@ -121,19 +109,9 @@ class HybridRetriever:
         points = []
         for emb, chunk in zip(embeddings, chunks):
             self.chunks_by_id[chunk.id] = chunk
-            points.append(
-                PointStruct(
-                    id=chunk.id,
-                    vector=emb.tolist(),
-                    payload=chunk.as_payload(),
-                )
-            )
+            points.append(PointStruct(id=chunk.id, vector=emb.tolist(), payload=chunk.as_payload()))
 
-        self.qdrant.upsert(
-            collection_name=self.collection_name,
-            points=points,
-            wait=True,
-        )
+        self.qdrant.upsert(collection_name=self.collection_name, points=points, wait=True)
 
         # BM25
         for chunk in chunks:
@@ -145,10 +123,7 @@ class HybridRetriever:
     def _semantic_search(self, query: str, top_k: int = 20) -> list[tuple]:
         q_emb = self.mistral.embed_texts([query])[0]
         hits = self.qdrant.query_points(
-            collection_name=self.collection_name,
-            query=q_emb.tolist(),
-            limit=top_k,
-            with_payload=False,
+            collection_name=self.collection_name, query=q_emb.tolist(), limit=top_k, with_payload=False
         )
         return [(str(pt.id), float(pt.score)) for pt in hits.points]
 
@@ -158,19 +133,10 @@ class HybridRetriever:
         tokens = query.split()
         scores = self._bm25.get_scores(tokens)
         idxs = np.argsort(scores)[::-1][:top_k]
-        return [
-            (self._bm25_chunk_ids[i], float(scores[i]))
-            for i in idxs
-            if scores[i] > 0
-        ]
+        return [(self._bm25_chunk_ids[i], float(scores[i])) for i in idxs if scores[i] > 0]
 
     def retrieve_hybrid(
-        self,
-        query: str,
-        top_k_semantic: int = 20,
-        top_k_bm25: int = 20,
-        top_k_final: int = 20,
-        alpha: float = 0.6,
+        self, query: str, top_k_semantic: int = 20, top_k_bm25: int = 20, top_k_final: int = 20, alpha: float = 0.6
     ) -> list[ScoredChunk]:
         sem_results = self._semantic_search(query, top_k_semantic)
         bm25_results = self._bm25_search(query, top_k_bm25)
@@ -193,20 +159,12 @@ class HybridRetriever:
         for cid, s in bm25_norm.items():
             combined[cid] = combined.get(cid, 0.0) + (1 - alpha) * s
 
-        sorted_ids = sorted(
-            combined.items(), key=lambda kv: kv[1], reverse=True
-        )[:top_k_final]
+        sorted_ids = sorted(combined.items(), key=lambda kv: kv[1], reverse=True)[:top_k_final]
 
         out: list[ScoredChunk] = []
         for cid, score in sorted_ids:
             chunk = self.chunks_by_id[cid]
-            out.append(
-                ScoredChunk(
-                    chunk=chunk,
-                    score=score,
-                    source="hybrid",
-                )
-            )
+            out.append(ScoredChunk(chunk=chunk, score=score, source="hybrid"))
         return out
 
 
@@ -214,26 +172,19 @@ class HybridRetriever:
 # Cross-encoder reranker
 # -------------------------------------------------------------------
 
+
 class CrossEncoderReranker:
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
         self.model = CrossEncoder(model_name, trust_remote_code=True)
 
-    def rerank(
-        self, query: str, candidates: list[ScoredChunk], top_k: int = 10
-    ) -> list[ScoredChunk]:
+    def rerank(self, query: str, candidates: list[ScoredChunk], top_k: int = 10) -> list[ScoredChunk]:
         if not candidates:
             return []
         pairs = [(query, c.chunk.text) for c in candidates]
         scores = self.model.predict(pairs).tolist()
         rescored = []
         for cand, score in zip(candidates, scores):
-            rescored.append(
-                ScoredChunk(
-                    chunk=cand.chunk,
-                    score=float(score),
-                    source="reranker",
-                )
-            )
+            rescored.append(ScoredChunk(chunk=cand.chunk, score=float(score), source="reranker"))
         rescored.sort(key=lambda c: c.score, reverse=True)
         return rescored[:top_k]
 
@@ -242,6 +193,7 @@ class CrossEncoderReranker:
 # RAG service (ingestion + 2-stage QA)
 # -------------------------------------------------------------------
 
+
 class RAGService:
     def __init__(self, storage_path: str):
         self.mistral = MistralClientWrapper()
@@ -249,12 +201,8 @@ class RAGService:
         self.reranker = CrossEncoderReranker()
 
         # Two chunkers: with and without Mistral OCR
-        self.chunker_ocr = DoclingHybridChunker(
-            use_mistral_ocr=True,
-        )
-        self.chunker_pdf = DoclingHybridChunker(
-            use_mistral_ocr=False,
-        )
+        self.chunker_ocr = DoclingHybridChunker(use_mistral_ocr=True)
+        self.chunker_pdf = DoclingHybridChunker(use_mistral_ocr=False)
 
     def ingest_document(self, path: str, use_mistral_ocr: bool) -> str:
         """
@@ -269,9 +217,7 @@ class RAGService:
         self.retriever.index(docling_chunks)
         return doc_id
 
-    def _build_context(
-        self, chunks: list[ScoredChunk], max_tokens: int
-    ) -> str:
+    def _build_context(self, chunks: list[ScoredChunk], max_tokens: int) -> str:
         budget_chars = max_tokens * 4
         parts = []
         used = 0
@@ -289,18 +235,10 @@ class RAGService:
             used += len(block)
         return "\n\n".join(parts)
 
-    def answer_question(
-        self,
-        question: str,
-        top_k_retrieve: int = 30,
-        top_k_rerank: int = 8,
-    ) -> dict[str, Any]:
+    def answer_question(self, question: str, top_k_retrieve: int = 30, top_k_rerank: int = 8) -> dict[str, Any]:
         # 1) Hybrid retrieve
         hybrid = self.retriever.retrieve_hybrid(
-            question,
-            top_k_semantic=top_k_retrieve,
-            top_k_bm25=top_k_retrieve,
-            top_k_final=top_k_retrieve,
+            question, top_k_semantic=top_k_retrieve, top_k_bm25=top_k_retrieve, top_k_final=top_k_retrieve
         )
 
         # 2) Cross-encoder rerank
@@ -308,7 +246,7 @@ class RAGService:
 
         # 3) Stage 1: draft
         ctx1 = self._build_context(reranked, max_tokens=900)
-        # NOTE: MessagesTypedDict type is specific to mistral. 
+        # NOTE: MessagesTypedDict type is specific to mistral.
         # need to handle OpenAI differently if used.
         draft_prompt: list[MessagesTypedDict] = [
             {
@@ -331,7 +269,7 @@ class RAGService:
 
         # 4) Stage 2: refine
         ctx2 = self._build_context(reranked, max_tokens=1500)
-        # NOTE: MessagesTypedDict type is specific to mistral. 
+        # NOTE: MessagesTypedDict type is specific to mistral.
         # need to handle OpenAI differently if used.
         refine_prompt: list[MessagesTypedDict] = [
             {
@@ -368,11 +306,7 @@ class RAGService:
             for sc in reranked
         ]
 
-        return {
-            "draft_answer": draft,
-            "final_answer": final,
-            "top_chunks": top_chunks,
-        }
+        return {"draft_answer": draft, "final_answer": final, "top_chunks": top_chunks}
 
 
 # -------------------------------------------------------------------
@@ -405,10 +339,7 @@ def health():
 
 
 @app.post("/ingest")
-async def ingest_pdf(
-    file: UploadFile = File(...),
-    use_mistral_ocr: bool = Form(False),
-):
+async def ingest_pdf(file: UploadFile = File(...), use_mistral_ocr: bool = Form(False)):
     # Save uploaded file to a temp path
     filename = file.filename
     if filename is None:
@@ -434,9 +365,7 @@ async def ingest_pdf(
 @app.post("/query")
 async def query_docs(req: QueryRequest):
     result = rag_service.answer_question(
-        question=req.question,
-        top_k_retrieve=req.top_k_retrieve,
-        top_k_rerank=req.top_k_rerank,
+        question=req.question, top_k_retrieve=req.top_k_retrieve, top_k_rerank=req.top_k_rerank
     )
     return result
 
@@ -448,6 +377,7 @@ async def query_docs(req: QueryRequest):
 HTML_PATH = Path(__file__).parent / "static" / "index.html"
 with open(HTML_PATH, "r") as f:
     HTML_PAGE = f.read()
+
 
 @app.get("/", response_class=HTMLResponse)
 def index():

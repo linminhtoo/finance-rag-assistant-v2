@@ -1,9 +1,9 @@
 import os
 import tempfile
-from dataclasses import dataclass
 from typing import Iterable, List, Optional
 
 from docling.document_converter import DocumentConverter
+
 # installed via docling-core[chunking]
 from docling_core.types.doc.document import DoclingDocument
 from docling_core.transforms.chunker.doc_chunk import DocChunk as DoclingDocChunk
@@ -31,19 +31,16 @@ class DoclingHybridChunker:
         use_mistral_ocr: bool = False,
         mistral_ocr_client: Optional[MistralOCRClient] = None,
     ):
-        # Docling converter (PDF / DOCX / Markdown -> DoclingDocument) 
+        # Docling converter (PDF / DOCX / Markdown -> DoclingDocument)
         self.converter = DocumentConverter()
 
-        # Tokenizer for HybridChunker (HuggingFace-based) 
-        self.tokenizer = HuggingFaceTokenizer.from_pretrained(
-            model_name=tokenizer_model,
-            max_tokens=max_tokens,
-        )
+        # Tokenizer for HybridChunker (HuggingFace-based)
+        self.tokenizer = HuggingFaceTokenizer.from_pretrained(model_name=tokenizer_model, max_tokens=max_tokens)
 
         # HybridChunker does the real token-aware splitting+merging
         self.hybrid_chunker = HybridChunker(
             tokenizer=self.tokenizer,
-            # merge_peers=True means undersized siblings with same headings are merged. 
+            # merge_peers=True means undersized siblings with same headings are merged.
             merge_peers=True,
         )
 
@@ -67,7 +64,7 @@ class DoclingHybridChunker:
         PDF -> Mistral OCR (Markdown) -> temp .md -> DoclingDocument.
 
         Note: Docling can parse Markdown as an input format and construct
-        a DoclingDocument. 
+        a DoclingDocument.
         """
         markdown = self.mistral_ocr_client.pdf_to_markdown(source)
 
@@ -111,7 +108,7 @@ class DoclingHybridChunker:
         # Token-aware hybrid chunking
         chunks: List[DocChunk] = []
         for i, chunk in enumerate(self.hybrid_chunker.chunk(dl_doc)):
-            # cast is needed bcos HybridChunker wrongly annotates output type as BaseChunk 
+            # cast is needed bcos HybridChunker wrongly annotates output type as BaseChunk
             # when it actually returns DocChunk
             if not isinstance(chunk, DoclingDocChunk):
                 raise TypeError(f"Expected DoclingDocChunk, got {type(chunk)}")
