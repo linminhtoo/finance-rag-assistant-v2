@@ -1,6 +1,6 @@
 import os
 import tempfile
-from typing import Iterable, List, Optional
+from typing import Iterable, Optional
 
 from docling.document_converter import DocumentConverter
 
@@ -48,7 +48,7 @@ class DoclingHybridChunker:
         self.overlap_tokens = overlap_tokens
 
         self.use_mistral_ocr = use_mistral_ocr
-        self.mistral_ocr_client = mistral_ocr_client or MistralOCRClient()
+        self.mistral_ocr_client = mistral_ocr_client
 
     # --- Internal helpers -------------------------------------------------
 
@@ -65,7 +65,12 @@ class DoclingHybridChunker:
 
         Note: Docling can parse Markdown as an input format and construct
         a DoclingDocument.
+
+        Requires that `self.mistral_ocr_client` is set.
         """
+        if self.mistral_ocr_client is None:
+            raise ValueError("Mistral OCR client is not set for OCR-based chunking.")
+        
         markdown = self.mistral_ocr_client.pdf_to_markdown(source)
 
         with tempfile.NamedTemporaryFile(suffix=".md", delete=False, mode="w", encoding="utf-8") as tmp:
@@ -90,9 +95,25 @@ class DoclingHybridChunker:
         else:
             return self._docling_from_pdf(source)
 
+    def _extract_page_numbers(self, chunk: DoclingDocChunk) -> list[int]:
+        """
+        Gather the unique page numbers that contributed to this chunk.
+
+        Docling exposes provenance information (DocItem.prov) for every
+        structural element; each provenance entry carries a `page_no`.
+        """
+        page_numbers: set[int] = set()
+        doc_items = chunk.meta.doc_items
+        for doc_item in doc_items:
+            provenance = doc_item.prov
+            for prov in provenance:
+                page_no = prov.page_no
+                page_numbers.add(page_no)
+        return sorted(page_numbers)
+
     # --- Public API -------------------------------------------------------
 
-    def chunk_document(self, source: str, doc_id: str) -> List[DocChunk]:
+    def chunk_document(self, source: str, doc_id: str) -> list[DocChunk]:
         """
         Convert a PDF / URL / Markdown file into token-bounded, hierarchy-aware chunks.
 
@@ -107,24 +128,22 @@ class DoclingHybridChunker:
         # and applies sliding-window + semantic splitting + merging on top.
 
         # Token-aware hybrid chunking
-        chunks: List[DocChunk] = []
+        chunks: list[DocChunk] = []
         for i, chunk in enumerate(self.hybrid_chunker.chunk(dl_doc)):
             # cast is needed bcos HybridChunker wrongly annotates output type as BaseChunk
             # when it actually returns DocChunk
             if not isinstance(chunk, DoclingDocChunk):
                 raise TypeError(f"Expected DoclingDocChunk, got {type(chunk)}")
             headings = chunk.meta.headings or []
-
-            # TODO: check how to retrieve page_no. it does NOT exist in origin.
-            # origin = chunk.meta.origin
-            # page_no = origin.page_no
+            page_numbers = self._extract_page_numbers(chunk)
+            page_no = page_numbers[0] if page_numbers else None
 
             chunks.append(
                 DocChunk(
                     id=f"{doc_id}_{i}",
                     doc_id=doc_id,
                     text=chunk.text,
-                    # page_no=page_no,
+                    page_no=page_no,
                     headings=headings,
                     source=source,
                 )
