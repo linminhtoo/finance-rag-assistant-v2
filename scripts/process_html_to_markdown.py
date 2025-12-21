@@ -186,6 +186,16 @@ def parse_args() -> Args:
     )
 
 
+def count_llm_errors(rendered: MarkdownOutput) -> tuple[int, int]:
+    llm_err_total = 0
+    page_cnt = 0
+    for page_meta in rendered.metadata["page_stats"]:
+        block_meta = page_meta["block_metadata"]
+        llm_err_total += block_meta["llm_error_count"]
+        page_cnt += 1
+    return llm_err_total, page_cnt
+
+
 def main():
     args = parse_args()
 
