@@ -6,4 +6,3 @@ python3 scripts/download.py \
     --output-dir ./data/sec_filings/ \
     --per-company 10 \
     2>&1 | tee logs/download_${now}.log
-
