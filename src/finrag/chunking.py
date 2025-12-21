@@ -5,16 +5,16 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
+from finrag.dataclasses import DocChunk
+
+if TYPE_CHECKING:
+    from finrag.ocr import MistralOCRClient
+
 from docling.document_converter import DocumentConverter
 from docling_core.transforms.chunker.doc_chunk import DocChunk as DoclingDocChunk
 from docling_core.transforms.chunker.hybrid_chunker import HybridChunker
 from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 from docling_core.types.doc.document import DoclingDocument
-
-from finrag.dataclasses import DocChunk
-
-if TYPE_CHECKING:
-    from finrag.ocr import MistralOCRClient
 
 
 class DoclingHybridChunker:
@@ -33,6 +33,8 @@ class DoclingHybridChunker:
         overlap_tokens: int = 64,
         use_mistral_ocr: bool = False,
         mistral_ocr_client: Optional["MistralOCRClient"] = None,
+        preprocess_markdown_tables: bool = False,
+        markdown_table_fence_lang: str = "text",
     ):
         # Docling converter (PDF / DOCX / Markdown -> DoclingDocument)
         self.converter = DocumentConverter()
@@ -52,6 +54,8 @@ class DoclingHybridChunker:
 
         self.use_mistral_ocr = use_mistral_ocr
         self.mistral_ocr_client = mistral_ocr_client
+        self.preprocess_markdown_tables = preprocess_markdown_tables
+        self._md_table_fencer = MarkdownTableCodeFencer(fence_lang=markdown_table_fence_lang)
 
     # --- Internal helpers -------------------------------------------------
 
@@ -75,7 +79,11 @@ class DoclingHybridChunker:
             raise ValueError("Mistral OCR client is not set for OCR-based chunking.")
 
         markdown = self.mistral_ocr_client.pdf_to_markdown(source)
+        if self.preprocess_markdown_tables:
+            markdown = self._md_table_fencer.fence_tables(markdown)
+        return self._docling_from_markdown_string(markdown)
 
+    def _docling_from_markdown_string(self, markdown: str) -> DoclingDocument:
         with tempfile.NamedTemporaryFile(suffix=".md", delete=False, mode="w", encoding="utf-8") as tmp:
             tmp.write(markdown)
             tmp_path = tmp.name
@@ -84,15 +92,22 @@ class DoclingHybridChunker:
             conv_result = self.converter.convert(source=tmp_path)
             return conv_result.document
         finally:
-            # For a production pipeline we might want to keep these, or
-            # write into an object store instead.
-            # for now we clean up.
             try:
                 os.remove(tmp_path)
             except OSError:
                 pass
 
+    def _docling_from_markdown_path(self, source: str) -> DoclingDocument:
+        if not self.preprocess_markdown_tables:
+            conv_result = self.converter.convert(source=source)
+            return conv_result.document
+        md = Path(source).read_text(encoding="utf-8")
+        md = self._md_table_fencer.fence_tables(md)
+        return self._docling_from_markdown_string(md)
+
     def _docling_document(self, source: str):
+        if str(source).lower().endswith((".md", ".markdown")):
+            return self._docling_from_markdown_path(source)
         if self.use_mistral_ocr:
             return self._docling_from_mistral_ocr(source)
         else:
@@ -184,7 +199,7 @@ class MarkdownTablePreservingChunker:
     _PAGE_SPAN_RE = re.compile(r'<span\s+id="page-(\d+)-(\d+)"\s*></span>', re.IGNORECASE)
     _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
 
-    def __init__(self, *, max_tokens: int = 512, overlap_tokens: int = 64, split_tables: bool = True):
+    def __init__(self, *, max_tokens: int = 512, overlap_tokens: int = 64, split_tables: bool = False):
         self.max_tokens = max_tokens
         self.overlap_tokens = overlap_tokens
         self.split_tables = split_tables
@@ -444,3 +459,92 @@ class MarkdownTablePreservingChunker:
 
         flush_buffer()
         return chunks
+
+
+class MarkdownTableCodeFencer:
+    """
+    Preprocess Markdown by wrapping pipe tables in fenced code blocks.
+
+    This is useful when using Docling's Markdown ingestion, which may
+    normalize/linearize tables into prose-like text (destroying the original
+    pipe-grid structure). By fencing the table, Docling tends to treat it as
+    verbatim content instead.
+
+    Notes:
+      - Skips tables already inside fenced code blocks.
+      - Detects GitHub-style pipe tables: header row + separator row.
+    """
+
+    _FENCE_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+    _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
+
+    def __init__(self, *, fence_lang: str = "text"):
+        self.fence_lang = fence_lang
+
+    @classmethod
+    def _is_table_start(cls, lines: list[str], idx: int) -> bool:
+        if idx + 1 >= len(lines):
+            return False
+        head = lines[idx]
+        sep = lines[idx + 1]
+        if "|" not in head:
+            return False
+        return bool(cls._TABLE_SEPARATOR_RE.match(sep))
+
+    @staticmethod
+    def _looks_like_table_row(line: str) -> bool:
+        # Conservative: require a pipe and non-empty (tables are contiguous).
+        return bool(line.strip()) and ("|" in line)
+
+    def fence_tables(self, markdown: str) -> str:
+        lines = markdown.splitlines()
+        out: list[str] = []
+
+        in_fence = False
+        fence_marker: str | None = None
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            m_fence = self._FENCE_RE.match(line)
+            if m_fence:
+                marker = m_fence.group(1)
+                if not in_fence:
+                    in_fence = True
+                    fence_marker = marker[0]  # '`' or '~'
+                else:
+                    # Close if same fence type (` or ~). Length mismatches are tolerated.
+                    if fence_marker and marker.startswith(fence_marker):
+                        in_fence = False
+                        fence_marker = None
+                out.append(line)
+                i += 1
+                continue
+
+            if in_fence:
+                out.append(line)
+                i += 1
+                continue
+
+            if self._is_table_start(lines, i):
+                start = i
+                i += 2
+                while i < len(lines) and self._looks_like_table_row(lines[i]):
+                    i += 1
+                table_lines = lines[start:i]
+
+                out.append(f"```{self.fence_lang}".rstrip())
+                out.extend(table_lines)
+                out.append("```")
+                continue
+
+            out.append(line)
+            i += 1
+
+        # Preserve original trailing newline behavior: join with '\n' and add one
+        # if the source had it.
+        text = "\n".join(out)
+        if markdown.endswith("\n") and not text.endswith("\n"):
+            text += "\n"
+        return text
