@@ -15,10 +15,10 @@ from marker.config.parser import ConfigParser
 from marker.converters.pdf import PdfConverter
 from marker.logger import get_logger
 from marker.models import create_model_dict
+
 # from marker.renderers.html import HTMLRenderer
 # from marker.renderers.json import JSONRenderer
-from marker.renderers.markdown import MarkdownRenderer
-from marker.renderers.markdown import MarkdownOutput
+from marker.renderers.markdown import MarkdownOutput, MarkdownRenderer
 from marker.schema.blocks import Block
 from marker.services.openai import OpenAIService as BaseOpenAIService
 from openai import APITimeoutError, RateLimitError
@@ -150,9 +150,7 @@ def parse_args() -> Args:
     parser = argparse.ArgumentParser()
     parser.add_argument("--html-dir", required=True, help="Directory containing HTML files to process (recursively).")
     parser.add_argument(
-        "--output-dir",
-        default="outputs",
-        help="Root output directory (writes `pdf/` and `markdown/` subfolders).",
+        "--output-dir", default="outputs", help="Root output directory (writes `pdf/` and `markdown/` subfolders)."
     )
     parser.add_argument(
         "--openai-base-url", required=True, help="Base URL for OpenAI-compatible API (no trailing slash)."
@@ -301,7 +299,7 @@ def main():
 
         rendered = thread_markdown_renderer(document)
         logger.success(f"Rendered markdown for {rel_path}")
-        
+
         llm_err_total, page_cnt = count_llm_errors(rendered)
         logger.info(f"{rel_path}: {llm_err_total=} out of {page_cnt=}")
 
@@ -346,16 +344,12 @@ def main():
                 f,
                 indent=2,
             )
-        
+
         logger.success(f"Finished processing {rel_path}")
         return rel_path, llm_err_total, page_cnt
 
     if args.workers == 1:
-        for html_file_path in tqdm(
-            html_paths,
-            desc="Processing HTML files",
-            unit="file",
-        ):
+        for html_file_path in tqdm(html_paths, desc="Processing HTML files", unit="file"):
             process_one(html_file_path)
         return
 
