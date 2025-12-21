@@ -18,6 +18,7 @@ export NCCL_P2P_LEVEL=PIX
 # export NCCL_SHM_DISABLE=1
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 
+# see: https://docs.vllm.ai/en/latest/examples/online_serving/opentelemetry/
 export OTEL_SERVICE_NAME="vllm-server"
 export OTEL_EXPORTER_OTLP_TRACES_INSECURE=true
 
@@ -32,8 +33,8 @@ vllm serve allenai/olmOCR-2-7B-1025 \
     --tensor-parallel-size 2 \
     --disable-custom-all-reduce \
     --max-model-len 32768 \
-    --gpu-memory-utilization 0.725 \
-    --max-num-batched-token 32 \
+    --gpu-memory-utilization 0.7 \
+    --max-num-batched-token 64 \
     --host 0.0.0.0 \
     --port 8989 \
     --api-key test \
