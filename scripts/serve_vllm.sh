@@ -26,7 +26,7 @@ export OTEL_EXPORTER_OTLP_TRACES_INSECURE=true
 # vllm serve allenai/olmOCR-7B-0825 \
 # vllm serve allenai/olmOCR-7B-0225-preview \
 # vllm serve allenai/olmOCR-2-7B-1025-FP8 \
-# yay, this finally works on 1 x A40! 
+# yay, this finally works on 1 x A40!
 # NOTE: bcos A40 is old, it doesn't support FP8, so just use the BF16 version.
 vllm serve allenai/olmOCR-2-7B-1025 \
     --tensor-parallel-size 2 \
@@ -44,26 +44,26 @@ vllm serve allenai/olmOCR-2-7B-1025 \
 # solution is to `sudo apt-get install cuda-compat-12-9`
 
 # NOTE: logs show `oltp_traces_endpoint=None`, maybe we can use it?
-# INFO 12-21 15:59:39 [core.py:93] Initializing a V1 LLM engine (v0.12.0) with config: 
-# model='allenai/olmOCR-2-7B-1025-FP8', speculative_config=None, tokenizer='allenai/olmOCR-2-7B-1025-FP8', 
-# skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False, 
-# dtype=torch.bfloat16, max_seq_len=16384, download_dir=None, load_format=auto, tensor_parallel_size=2, 
-# pipeline_parallel_size=1, data_parallel_size=1, disable_custom_all_reduce=False, quantization=compressed-tensors, 
-# enforce_eager=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto', 
-# disable_fallback=False, disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='', 
-# reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, 
-# otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01), seed=0, 
-# served_model_name=allenai/olmOCR-2-7B-1025-FP8, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None, 
-# compilation_config={'level': None, 'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '', 
-# 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention', 
-# 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2', 
-# 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core', 
-# 'vllm::kda_attention', 'vllm::sparse_attn_indexer'], 'compile_mm_encoder': False, 'compile_sizes': [], 'inductor_compile_config': 
-# {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {}, 
+# INFO 12-21 15:59:39 [core.py:93] Initializing a V1 LLM engine (v0.12.0) with config:
+# model='allenai/olmOCR-2-7B-1025-FP8', speculative_config=None, tokenizer='allenai/olmOCR-2-7B-1025-FP8',
+# skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, tokenizer_revision=None, trust_remote_code=False,
+# dtype=torch.bfloat16, max_seq_len=16384, download_dir=None, load_format=auto, tensor_parallel_size=2,
+# pipeline_parallel_size=1, data_parallel_size=1, disable_custom_all_reduce=False, quantization=compressed-tensors,
+# enforce_eager=False, kv_cache_dtype=auto, device_config=cuda, structured_outputs_config=StructuredOutputsConfig(backend='auto',
+# disable_fallback=False, disable_any_whitespace=False, disable_additional_properties=False, reasoning_parser='',
+# reasoning_parser_plugin='', enable_in_reasoning=False), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None,
+# otlp_traces_endpoint=None, collect_detailed_traces=None, kv_cache_metrics=False, kv_cache_metrics_sample=0.01), seed=0,
+# served_model_name=allenai/olmOCR-2-7B-1025-FP8, enable_prefix_caching=True, enable_chunked_prefill=True, pooler_config=None,
+# compilation_config={'level': None, 'mode': <CompilationMode.VLLM_COMPILE: 3>, 'debug_dump_path': None, 'cache_dir': '',
+# 'compile_cache_save_format': 'binary', 'backend': 'inductor', 'custom_ops': ['none'], 'splitting_ops': ['vllm::unified_attention',
+# 'vllm::unified_attention_with_output', 'vllm::unified_mla_attention', 'vllm::unified_mla_attention_with_output', 'vllm::mamba_mixer2',
+# 'vllm::mamba_mixer', 'vllm::short_conv', 'vllm::linear_attention', 'vllm::plamo2_mamba_mixer', 'vllm::gdn_attention_core',
+# 'vllm::kda_attention', 'vllm::sparse_attn_indexer'], 'compile_mm_encoder': False, 'compile_sizes': [], 'inductor_compile_config':
+# {'enable_auto_functionalized_v2': False, 'combo_kernels': True, 'benchmark_combo_kernel': True}, 'inductor_passes': {},
 # 'cudagraph_mode': <CUDAGraphMode.FULL_AND_PIECEWISE: (2, 1)>, 'cudagraph_num_of_warmups': 1, 'cudagraph_capture_sizes': [1, 2, 4, 8, 16],
-# 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config': 
-# {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'eliminate_noops': True, 'enable_sp': False, 
-# 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 16, 'dynamic_shapes_config': 
+# 'cudagraph_copy_inputs': False, 'cudagraph_specialize_lora': True, 'use_inductor_graph_partition': False, 'pass_config':
+# {'fuse_norm_quant': False, 'fuse_act_quant': False, 'fuse_attn_quant': False, 'eliminate_noops': True, 'enable_sp': False,
+# 'fuse_gemm_comms': False, 'fuse_allreduce_rms': False}, 'max_cudagraph_capture_size': 16, 'dynamic_shapes_config':
 # {'type': <DynamicShapesType.BACKED: 'backed'>}, 'local_cache_dir': None}
 
 # dont use reasoning model as we dont need it for our recipe chat bot.

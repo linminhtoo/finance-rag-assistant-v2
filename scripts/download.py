@@ -17,6 +17,7 @@ session.headers.update({"User-Agent": UA, "Accept-Encoding": "gzip, deflate"})
 
 CIK_TO_TICKER = {}
 
+
 # TODO: define proper return dataclass
 # TODO: fix types and docstrings for all functions
 # TODO: 10K is not enough, only filed annually, add 10-Q too.
@@ -45,15 +46,13 @@ def list_10k_submissions(cik, max_docs: int = 5, timeout: int = 30):
             out_10k.append((a.replace("-", ""), p, d))
         if f == "10-Q":
             out_10q.append((a.replace("-", ""), p, d))
-    
+
     ticker = CIK_TO_TICKER.get(cik, "UNKNOWN")
     logger.info(
-        f"Found {len(out_10k)} 10-K filings for CIK {cik} ({ticker}), "
-        f"returning top {min(len(out_10k), max_docs)}"
+        f"Found {len(out_10k)} 10-K filings for CIK {cik} ({ticker}), returning top {min(len(out_10k), max_docs)}"
     )
     logger.info(
-        f"Found {len(out_10q)} 10-Q filings for CIK {cik} ({ticker}), "
-        f"returning top {min(len(out_10q), max_docs)}"
+        f"Found {len(out_10q)} 10-Q filings for CIK {cik} ({ticker}), returning top {min(len(out_10q), max_docs)}"
     )
     # [(accession_no_nohyphens, primary_doc, filing_date), ...]
     return out_10k[:max_docs] + out_10q[:max_docs]
