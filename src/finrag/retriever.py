@@ -52,8 +52,7 @@ class HybridRetriever:
         dim = int(embeddings.shape[1])
         if not self.qdrant.collection_exists(self.collection_name):
             self.qdrant.create_collection(
-                collection_name=self.collection_name,
-                vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
+                collection_name=self.collection_name, vectors_config=VectorParams(size=dim, distance=Distance.COSINE)
             )
             self.vector_dim = dim
         elif self.vector_dim is not None and dim != self.vector_dim:

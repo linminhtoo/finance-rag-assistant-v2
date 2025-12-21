@@ -41,11 +41,14 @@ class MistralClientWrapper:
 
     def chat(self, messages: list[ChatMessage], temperature: float = 0.1) -> str:
         mistral_messages = [cast(MessagesTypedDict, msg) for msg in messages]
-        res = self.client.chat.complete(model=self.chat_model, messages=mistral_messages, temperature=temperature, stream=False)
+        res = self.client.chat.complete(
+            model=self.chat_model, messages=mistral_messages, temperature=temperature, stream=False
+        )
         try:
             return res.choices[0].message.content  # type: ignore
         except Exception as e:
             raise RuntimeError(f"Failed to get chat response: {e}") from e
+
 
 class OpenAIClientWrapper:
     def __init__(
@@ -75,9 +78,7 @@ class OpenAIClientWrapper:
         return np.vstack(vectors)
 
     def chat(self, messages: list[ChatMessage], temperature: float = 0.1) -> str:
-        oa_messages: list[ChatCompletionMessageParam] = [
-            cast(ChatCompletionMessageParam, msg) for msg in messages
-        ]
+        oa_messages: list[ChatCompletionMessageParam] = [cast(ChatCompletionMessageParam, msg) for msg in messages]
         res = self.client.chat.completions.create(model=self.chat_model, messages=oa_messages, temperature=temperature)
         try:
             content = res.choices[0].message.content
