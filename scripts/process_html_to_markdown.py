@@ -131,3 +131,57 @@ tfoot {{ display: table-footer-group; }}
 """
 )
 
+
+@dataclass
+class Args:
+    html_dir: str
+    output_dir: str
+    openai_base_url: str
+    openai_model: str
+    openai_system_prompt: str
+    openai_temperature: float
+    timeout: int
+    max_retries: int
+    max_concurrency: int
+    workers: int
+
+
+def parse_args() -> Args:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--html-dir", required=True, help="Directory containing HTML files to process (recursively).")
+    parser.add_argument(
+        "--output-dir",
+        default="outputs",
+        help="Root output directory (writes `pdf/` and `markdown/` subfolders).",
+    )
+    parser.add_argument(
+        "--openai-base-url", required=True, help="Base URL for OpenAI-compatible API (no trailing slash)."
+    )
+    parser.add_argument("--openai-model", required=True, help="Model name for OpenAI-compatible API.")
+    parser.add_argument("--openai-system-prompt", default="", help="Optional system prompt for the LLM.")
+    parser.add_argument("--openai-temperature", type=float, default=0.7, help="Sampling temperature.")
+    parser.add_argument("--timeout", type=int, default=30, help="Request timeout in seconds.")
+    parser.add_argument(
+        "--max-retries", type=int, default=2, help="Max retries for transient errors (rate limit/timeout)."
+    )
+    parser.add_argument("--max-concurrency", type=int, default=3, help="Max parallel in-flight LLM requests.")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="Number of parallel workers over HTML files (effective LLM concurrency ~= workers * max_concurrency).",
+    )
+    args = parser.parse_args()
+    return Args(
+        html_dir=args.html_dir,
+        output_dir=args.output_dir,
+        openai_base_url=args.openai_base_url,
+        openai_model=args.openai_model,
+        openai_system_prompt=args.openai_system_prompt,
+        openai_temperature=args.openai_temperature,
+        timeout=args.timeout,
+        max_retries=args.max_retries,
+        max_concurrency=args.max_concurrency,
+        workers=args.workers,
+    )
+
