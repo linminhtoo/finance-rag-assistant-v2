@@ -255,9 +255,9 @@ def main():
         raise RuntimeError("--workers must be >= 1")
 
     thread_state = local()
-    
+
     # FIXME: this doesn't work bcos of pytorch model.
-    # need to use pytorch multiprocessing ? 
+    # need to use pytorch multiprocessing ?
     def get_pipeline() -> tuple[PdfConverter, MarkdownRenderer]:
         pipeline = getattr(thread_state, "pipeline", None)
         if pipeline is not None:
@@ -355,7 +355,7 @@ def main():
         for html_file_path in tqdm(html_paths, desc="Processing HTML files", unit="file"):
             process_one(html_file_path)
         return
-    
+
     raise RuntimeError("Multiprocessing with more than 1 worker is currently disabled.")
     logger.info(f"Processing HTML files in parallel with {args.workers} workers")
     failures: list[Path] = []
