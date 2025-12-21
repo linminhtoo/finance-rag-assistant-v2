@@ -94,3 +94,40 @@ class CustomOpenAIService(BaseOpenAIService):
 
         return {}
 
+
+W_IN = 1400 / 96
+H_IN = 1350 / 96
+
+# first part sets landscape orientation
+# second part handles page-breaks
+CSS_STYLESHEET = weasyprint.CSS(
+    string=f"""
+@page {{ size: {W_IN:.3f}in {H_IN:.3f}in; margin: 4mm; }}
+html, body {{ margin: 0; }}
+"""
+    + """
+/* Turn EDGAR <hr page-break-after> into hard page boundaries */
+hr[style*="page-break-after"] {{
+  break-after: page;
+  page-break-after: always;
+  border: 0; height: 0; margin: 0; padding: 0;
+}}
+
+/* IMPORTANT: allow multi-page tables */
+table {{
+  break-inside: auto;          /* allow splitting */
+  page-break-inside: auto;     /* legacy */
+}}
+
+/* Optional: keep individual rows together (usually OK) */
+tr {{
+  break-inside: avoid;
+  page-break-inside: avoid;
+}}
+
+/* Optional but helpful: repeat header row on each page */
+thead {{ display: table-header-group; }}
+tfoot {{ display: table-footer-group; }}
+"""
+)
+
