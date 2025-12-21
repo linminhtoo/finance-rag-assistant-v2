@@ -339,3 +339,31 @@ def main():
         
         logger.success(f"Finished processing {rel_path}")
         return rel_path, llm_err_total, page_cnt
+
+    if args.workers == 1:
+        for html_file_path in tqdm(
+            html_paths,
+            desc="Processing HTML files",
+            unit="file",
+        ):
+            process_one(html_file_path)
+        return
+
+    failures: list[Path] = []
+    with ThreadPoolExecutor(max_workers=args.workers) as executor:
+        futures = {executor.submit(process_one, p): p for p in html_paths}
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Processing HTML files", unit="file"):
+            html_file_path = futures[future]
+            try:
+                rel_path, llm_err_total, page_cnt = future.result()
+                logger.info(f"{rel_path}: {llm_err_total=} out of {page_cnt=}")
+            except Exception:
+                failures.append(html_file_path)
+                logger.exception(f"Failed processing: {html_file_path}")
+
+    if failures:
+        raise RuntimeError(f"Failed to process {len(failures)} files; see logs for details.")
+
+
+if __name__ == "__main__":
+    main()
