@@ -186,6 +186,21 @@ def parse_args() -> Args:
     )
 
 
+def main():
+    args = parse_args()
+
+    html_dir = Path(args.html_dir).expanduser().resolve()
+    if not html_dir.exists() or not html_dir.is_dir():
+        raise RuntimeError(f"--html-dir must be an existing directory: {html_dir}")
+
+    output_root = Path(args.output_dir).expanduser().resolve()
+    pdf_root = output_root / "intermediate_pdf"
+    md_root = output_root / "processed_markdown"
+    debug_root = output_root / "debug"
+    pdf_root.mkdir(parents=True, exist_ok=True)
+    md_root.mkdir(parents=True, exist_ok=True)
+    debug_root.mkdir(parents=True, exist_ok=True)
+
     openai_api_key = os.environ.get("OPENAI_API_KEY")
     if not openai_api_key:
         raise RuntimeError("Set OPENAI_API_KEY before running so the OpenAI llm_service can authenticate.")
@@ -219,3 +234,108 @@ def parse_args() -> Args:
         llm_service=config_parser.get_llm_service(),
     )
 
+    markdown_renderer = MarkdownRenderer(renderer_config)
+    # html_renderer = HTMLRenderer(renderer_config)
+    # json_renderer = JSONRenderer({**renderer_config, "extract_images": False})
+
+    html_paths = sorted(list(html_dir.rglob("*.html")) + list(html_dir.rglob("*.htm")))
+    if not html_paths:
+        raise RuntimeError(f"No HTML files found under: {html_dir}")
+    logger.info(f"Found {len(html_paths)} HTML files to process under {html_dir}")
+
+    if args.workers < 1:
+        raise RuntimeError("--workers must be >= 1")
+
+    thread_state = local()
+
+    def get_pipeline() -> tuple[PdfConverter, MarkdownRenderer]:
+        pipeline = getattr(thread_state, "pipeline", None)
+        if pipeline is not None:
+            return pipeline
+
+        thread_converter = PdfConverter(
+            config=renderer_config,
+            artifact_dict=create_model_dict(),
+            processor_list=config_parser.get_processors(),
+            renderer=config_parser.get_renderer(),
+            llm_service=config_parser.get_llm_service(),
+        )
+        thread_markdown_renderer = MarkdownRenderer(renderer_config)
+        thread_state.pipeline = (thread_converter, thread_markdown_renderer)
+        return thread_state.pipeline
+
+    def process_one(html_file_path: Path) -> tuple[Path, int, int]:
+        thread_converter, thread_markdown_renderer = (
+            (converter, markdown_renderer) if args.workers == 1 else get_pipeline()
+        )
+
+        rel_path = html_file_path.relative_to(html_dir)
+        pdf_path = (pdf_root / rel_path).with_suffix(".pdf")
+        md_path = (md_root / rel_path).with_suffix(".md")
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        md_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Processing {html_file_path} -> {pdf_path}, {md_path}")
+
+        debug_dir = debug_root / rel_path.parent / rel_path.stem
+        debug_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. convert HTML to PDF
+        source_url = f"file://{html_file_path.absolute()}"
+        weasyprint.HTML(source_url).write_pdf(str(pdf_path), stylesheets=[CSS_STYLESHEET])
+        logger.success(f"Wrote intermediate PDF to {pdf_path}")
+
+        # 2. convert PDF to document (so we can save multiple renderings/artifacts)
+        # each 10Q usually requires ~40 LLM calls for LLMTableProcessor
+        document = thread_converter.build_document(str(pdf_path))
+        logger.success(f"Converted PDF to Marker document for {rel_path}")
+
+        rendered = thread_markdown_renderer(document)
+        logger.success(f"Rendered markdown for {rel_path}")
+        
+        llm_err_total, page_cnt = count_llm_errors(rendered)
+        logger.info(f"{rel_path}: {llm_err_total=} out of {page_cnt=}")
+
+        with open(md_path, "w") as f:
+            f.write(rendered.markdown)
+
+        with open(debug_dir / "metadata.json", "w") as f:
+            json.dump(rendered.metadata, f, indent=2)
+
+        # also save HTML and JSON renderings for debugging
+        # html_out = html_renderer(document)
+        # with open(debug_dir / "document.html", "w") as f:
+        #     f.write(html_out.html)
+
+        # json_out = json_renderer(document)
+        # with open(debug_dir / "document.json", "w") as f:
+        #     f.write(json_out.model_dump_json(indent=2))
+
+        with open(debug_dir / "run_info.json", "w") as f:
+            json.dump(
+                {
+                    "input_html": str(html_file_path),
+                    "output_pdf": str(pdf_path),
+                    "output_markdown": str(md_path),
+                    "args": {
+                        "html_dir": args.html_dir,
+                        "output_dir": args.output_dir,
+                        "openai_base_url": args.openai_base_url,
+                        "openai_model": args.openai_model,
+                        "openai_system_prompt": args.openai_system_prompt,
+                        "openai_temperature": args.openai_temperature,
+                        "timeout": args.timeout,
+                        "max_retries": args.max_retries,
+                        "max_concurrency": args.max_concurrency,
+                        "workers": args.workers,
+                    },
+                    "config": renderer_config,
+                    "llm_error_count": llm_err_total,
+                    "page_count": page_cnt,
+                    "llm_error_ratio": llm_err_total / page_cnt if page_cnt > 0 else None,
+                },
+                f,
+                indent=2,
+            )
+        
+        logger.success(f"Finished processing {rel_path}")
+        return rel_path, llm_err_total, page_cnt
