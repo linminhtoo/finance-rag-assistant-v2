@@ -185,3 +185,37 @@ def parse_args() -> Args:
         workers=args.workers,
     )
 
+
+    openai_api_key = os.environ.get("OPENAI_API_KEY")
+    if not openai_api_key:
+        raise RuntimeError("Set OPENAI_API_KEY before running so the OpenAI llm_service can authenticate.")
+
+    config = {
+        "output_format": "markdown",
+        "use_llm": True,
+        "llm_service": "scripts.process_html_to_markdown.CustomOpenAIService",
+        "openai_api_key": openai_api_key,
+        "openai_base_url": args.openai_base_url,
+        "openai_model": args.openai_model,
+        "CustomOpenAIService_openai_temperature": args.openai_temperature,
+        "CustomOpenAIService_openai_system_prompt": args.openai_system_prompt,
+        "CustomOpenAIService_timeout": args.timeout,
+        "CustomOpenAIService_max_retries": args.max_retries,
+        # Marker calls this "max_concurrency" (default 3). This controls parallel in-flight
+        # LLM requests (not "batching" into a single request).
+        "max_concurrency": args.max_concurrency,
+        "LLMTableProcessor_max_concurrency": args.max_concurrency,
+        "disable_image_extraction": True,
+        "force_ocr": False,
+    }
+    config_parser = ConfigParser(config)
+    renderer_config = config_parser.generate_config_dict()
+
+    converter = PdfConverter(
+        config=renderer_config,
+        artifact_dict=create_model_dict(),
+        processor_list=config_parser.get_processors(),
+        renderer=config_parser.get_renderer(),
+        llm_service=config_parser.get_llm_service(),
+    )
+
