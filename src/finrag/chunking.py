@@ -70,7 +70,7 @@ class DoclingHybridChunker:
         """
         if self.mistral_ocr_client is None:
             raise ValueError("Mistral OCR client is not set for OCR-based chunking.")
-        
+
         markdown = self.mistral_ocr_client.pdf_to_markdown(source)
 
         with tempfile.NamedTemporaryFile(suffix=".md", delete=False, mode="w", encoding="utf-8") as tmp:
