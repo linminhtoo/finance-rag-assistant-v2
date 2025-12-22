@@ -363,3 +363,141 @@ class DocumentContextPostprocessor:
         return chunks
 
 
+class HeuristicSummaryPostprocessor:
+    """
+    Adds a short summary + an optional index/embedding text prefix.
+
+    The summary is stored in `chunk.metadata['summary']`.
+    The enriched text for embedding/BM25 is stored in `chunk.metadata['index_text']`.
+    """
+
+    _TABLE_SEPARATOR_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
+
+    def __init__(
+        self,
+        *,
+        max_summary_chars: int = 300,
+        include_headings_in_index_text: bool = True,
+        include_page_in_index_text: bool = True,
+        include_summary_in_index_text: bool = True,
+        include_doc_context_in_index_text: bool = True,
+    ):
+        self.max_summary_chars = int(max_summary_chars)
+        self.include_headings_in_index_text = include_headings_in_index_text
+        self.include_page_in_index_text = include_page_in_index_text
+        self.include_summary_in_index_text = include_summary_in_index_text
+        self.include_doc_context_in_index_text = include_doc_context_in_index_text
+
+    @staticmethod
+    def _ensure_meta(chunk: DocChunk) -> dict:
+        if chunk.metadata is None:
+            chunk.metadata = {}
+        return chunk.metadata
+
+    @classmethod
+    def _looks_like_pipe_table(cls, text: str) -> bool:
+        # FIXME: this doesn't work. it might be too rigid as well
+        # eg text could be some text followed by table, so lines[0] may not have any "|"
+        lines = [ln for ln in text.splitlines() if ln.strip() and ln != "```"]
+        if len(lines) < 2:
+            return False
+        return ("|" in lines[0]) and bool(cls._TABLE_SEPARATOR_RE.match(lines[1]))
+
+    @staticmethod
+    def _truncate(text: str, limit: int) -> str:
+        text = re.sub(r"\s+", " ", text).strip()
+        if limit <= 0:
+            return ""
+        if len(text) <= limit:
+            return text
+        return text[: max(0, limit - 1)].rstrip() + "…"
+
+    def _summarize_table(self, text: str, headings: list[str]) -> str:
+        # TODO: tables are not being captured. 
+        lines = [ln for ln in text.splitlines() if ln.strip() and ln != "```"]
+        header = lines[0].strip()
+        cols = [c.strip() for c in header.strip("|").split("|")]
+        cols = [c for c in cols if c]
+        topic = headings[-1] if headings else "Table"
+        if cols:
+            col_str = ", ".join(cols[:8])
+            if len(cols) > 8:
+                col_str += ", …"
+            return self._truncate(f"{topic} (table). Columns: {col_str}.", self.max_summary_chars)
+        return self._truncate(f"{topic} (table).", self.max_summary_chars)
+
+    def _summarize_text(self, text: str, headings: list[str]) -> str:
+        raise RuntimeError("Current logic is not useful. Maybe we can use an LLM instead.")
+        # Grab first non-empty line and then first sentence-ish.
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            return ""
+        first = lines[0]
+        # If the first line is huge, just truncate it.
+        if len(first) > self.max_summary_chars:
+            return self._truncate(first, self.max_summary_chars)
+        parts = re.split(r"(?<=[.!?])\s+", first, maxsplit=1)
+        sent = parts[0] if parts else first
+        topic = headings[-1] if headings else ""
+        if topic and topic.casefold() not in sent.casefold():
+            sent = f"{topic}: {sent}"
+        return self._truncate(sent, self.max_summary_chars)
+
+    def process(self, chunks: list[DocChunk]) -> list[DocChunk]:
+        for ch in chunks:
+            meta = self._ensure_meta(ch)
+
+            # TODO: tables are not being captured. _looks_like_pipe_table() is not good enough.
+            is_table = bool(meta.get("block_type") == "table") or self._looks_like_pipe_table(ch.text)
+            if is_table:
+                summary = self._summarize_table(ch.text, ch.headings)
+            else:
+                # summary = self._summarize_text(ch.text, ch.headings)
+                summary = ""
+
+            if summary:
+                meta["summary"] = summary
+
+            # Build index_text used for embedding + BM25, without mutating `chunk.text`.
+            prefix_lines: list[str] = []
+            doc = meta.get("doc") if isinstance(meta.get("doc"), dict) else {}
+            if self.include_doc_context_in_index_text and doc:
+                company = doc.get("company")
+                ticker = doc.get("ticker")
+                filing_type = doc.get("filing_type")
+                filing_date = doc.get("filing_date")
+                period_end_date = doc.get("period_end_date")
+                filing_quarter = doc.get("filing_quarter")
+                # cik = doc.get("cik")
+
+                if company:
+                    prefix_lines.append(f"Company: {company}")
+                if ticker:
+                    prefix_lines.append(f"Ticker: {ticker}")
+                # if cik:
+                #     prefix_lines.append(f"CIK: {cik}")
+                filing_bits = []
+                if filing_type:
+                    filing_bits.append(str(filing_type))
+                if filing_date:
+                    filing_bits.append(f"filed {filing_date}")
+                if period_end_date:
+                    filing_bits.append(f"period ended {period_end_date}")
+                if filing_bits:
+                    prefix_lines.append("Filing: " + ", ".join(filing_bits))
+                if filing_quarter:
+                    prefix_lines.append(f"Filing quarter: {filing_quarter}")
+
+            if self.include_headings_in_index_text and ch.headings:
+                prefix_lines.append("Section: " + " > ".join(ch.headings))
+            if self.include_page_in_index_text and ch.page_no is not None:
+                prefix_lines.append(f"Page: {ch.page_no}")
+            if self.include_summary_in_index_text and summary:
+                prefix_lines.append("Summary: " + summary)
+
+            if prefix_lines:
+                meta["index_text"] = "\n".join(prefix_lines).strip() + "\n\n" + ch.text
+            else:
+                meta["index_text"] = ch.text
+
+        return chunks
