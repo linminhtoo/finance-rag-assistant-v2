@@ -20,7 +20,6 @@ CIK_TO_TICKER = {}
 
 # TODO: define proper return dataclass
 # TODO: fix types and docstrings for all functions
-# TODO: 10K is not enough, only filed annually, add 10-Q too.
 def ticker_map(timeout: int = 30):
     # Official SEC static mapping of tickers <-> CIKs
     j = session.get("https://www.sec.gov/files/company_tickers.json", timeout=timeout).json()
@@ -43,9 +42,9 @@ def list_10k_submissions(cik, max_docs: int = 5, timeout: int = 30):
     out_10q = []
     for f, a, p, d in zip(forms, acc, prim, dates):
         if f == "10-K":
-            out_10k.append((a.replace("-", ""), p, d))
+            out_10k.append(("10-K", a.replace("-", ""), p, d))
         if f == "10-Q":
-            out_10q.append((a.replace("-", ""), p, d))
+            out_10q.append(("10-Q", a.replace("-", ""), p, d))
 
     ticker = CIK_TO_TICKER.get(cik, "UNKNOWN")
     logger.info(
@@ -74,10 +73,9 @@ def fetch_10ks_for_tickers(tickers: list[str], output_dir: Path, per_company: in
     t2c = ticker_map()
     for t in tqdm(tickers, desc="fetching tickers"):
         cik = t2c[t.upper()]
-        for acc_no, primary, fdate in tqdm(list_10k_submissions(cik, per_company), desc=f"processing ticker {t}"):
+        for form_type, acc_no, primary, fdate in tqdm(list_10k_submissions(cik, per_company), desc=f"processing ticker {t}"):
             html, src_url = download_primary(cik, acc_no, primary)
 
-            form_type = "10-K" if "10-K" in primary else "10-Q"
             base = f"{t.upper()}_{acc_no}_{form_type}_{fdate}"
 
             (out_raw_folder / f"{base}.html").write_text(html, encoding="utf-8")
@@ -108,4 +106,3 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     fetch_10ks_for_tickers(args.tickers, output_dir=args.output_dir, per_company=args.per_company, delay=args.delay)
-    # TODO: add accompanying bash script
