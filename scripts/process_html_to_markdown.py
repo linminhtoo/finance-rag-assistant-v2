@@ -218,8 +218,135 @@ def count_llm_errors(rendered: MarkdownOutput) -> tuple[int, int]:
     return llm_err_total, page_cnt
 
 
+def get_worker_index() -> int:
+    identity = mp.current_process()._identity
+    if identity:
+        return identity[0]
+    match = re.search(r"(\d+)$", mp.current_process().name)
+    if match:
+        return int(match.group(1))
+    return 1
+
+
+def extract_year_from_filename(html_path: Path) -> int | None:
+    match = re.search(r"(\d{4})-\d{2}-\d{2}$", html_path.stem)
+    if not match:
+        return None
+    return int(match.group(1))
+
+
+def init_worker(config: dict, gpu_ids: list[str]) -> None:    
+    if gpu_ids:
+        worker_index = get_worker_index()
+        gpu_id = gpu_ids[(worker_index - 1) % len(gpu_ids)]
+        # NOTE: setting env var is too late here, so we must use torch.cuda.set_device()
+        # os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.set_device(int(gpu_id))
+        except Exception as exc:  # noqa: BLE001 - best effort logging
+            logger.warning(f"Unable to pin CUDA device for worker {worker_index}: {exc}")
+        logger.info(f"Worker {worker_index} using GPU {gpu_id}")
+    
+    global _worker_converter, _worker_markdown_renderer, _worker_renderer_config
+    config_parser = ConfigParser(config)
+    renderer_config = config_parser.generate_config_dict()
+    _worker_converter = PdfConverter(
+        config=renderer_config,
+        artifact_dict=create_model_dict(),
+        processor_list=config_parser.get_processors(),
+        renderer=config_parser.get_renderer(),
+        llm_service=config_parser.get_llm_service(),
+    )
+    _worker_markdown_renderer = MarkdownRenderer(renderer_config)
+    _worker_renderer_config = renderer_config
+
+
+def get_worker_pipeline() -> tuple[PdfConverter, MarkdownRenderer, dict]:
+    if _worker_converter is None or _worker_markdown_renderer is None or _worker_renderer_config is None:
+        raise RuntimeError("Worker pipeline has not been initialized")
+    return _worker_converter, _worker_markdown_renderer, _worker_renderer_config
+
+
+def process_one(
+    html_file_path: Path, html_dir: Path, pdf_root: Path, md_root: Path, debug_root: Path, args_dict: dict
+) -> None:
+    # hack: sleep a bit to stagger LLM requests
+    # time.sleep(random.uniform(10, 30))
+
+    worker_converter, worker_markdown_renderer, renderer_config = get_worker_pipeline()
+
+    rel_path = html_file_path.relative_to(html_dir)
+    pdf_path = (pdf_root / rel_path).with_suffix(".pdf")
+    md_path = (md_root / rel_path).with_suffix(".md")
+    pdf_path.parent.mkdir(parents=True, exist_ok=True)
+    md_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Processing {html_file_path} -> {pdf_path}, {md_path}")
+
+    debug_dir = debug_root / rel_path.parent / rel_path.stem
+    debug_dir.mkdir(parents=True, exist_ok=True)
+
+    # if all output paths already exist, skip
+    if pdf_path.exists() and md_path.exists():
+        logger.info(f"Outputs already exist; skipping: {rel_path}")
+        return
+
+    # 1. convert HTML to PDF
+    source_url = f"file://{html_file_path.absolute()}"
+    weasyprint.HTML(source_url).write_pdf(str(pdf_path), stylesheets=[CSS_STYLESHEET])
+    logger.success(f"Wrote intermediate PDF to {pdf_path}")
+
+    # 2. convert PDF to document (so we can save multiple renderings/artifacts)
+    # each 10Q usually requires ~40 LLM calls for LLMTableProcessor
+    document = worker_converter.build_document(str(pdf_path))
+    logger.success(f"Converted PDF to Marker document for {rel_path}")
+
+    rendered = worker_markdown_renderer(document)
+    logger.success(f"Rendered markdown for {rel_path}")
+
+    llm_err_total, page_cnt = count_llm_errors(rendered)
+    logger.info(f"{rel_path}: {llm_err_total=} out of {page_cnt=}")
+
+    with open(md_path, "w") as f:
+        f.write(rendered.markdown)
+
+    with open(debug_dir / "metadata.json", "w") as f:
+        json.dump(rendered.metadata, f, indent=2)
+
+    # also save HTML and JSON renderings for debugging
+    # html_out = html_renderer(document)
+    # with open(debug_dir / "document.html", "w") as f:
+    #     f.write(html_out.html)
+
+    # json_out = json_renderer(document)
+    # with open(debug_dir / "document.json", "w") as f:
+    #     f.write(json_out.model_dump_json(indent=2))
+
+    with open(debug_dir / "run_info.json", "w") as f:
+        json.dump(
+            {
+                "input_html": str(html_file_path),
+                "output_pdf": str(pdf_path),
+                "output_markdown": str(md_path),
+                "args": args_dict,
+                "config": renderer_config,
+                "llm_error_count": llm_err_total,
+                "page_count": page_cnt,
+                "llm_error_ratio": llm_err_total / page_cnt if page_cnt > 0 else None,
+            },
+            f,
+            indent=2,
+        )
+
+    logger.success(f"Finished processing {rel_path}")
+    return
+
+
 def main():
     args = parse_args()
+    logger.info(f"Starting processing with args: {args}")
 
     html_dir = Path(args.html_dir).expanduser().resolve()
     if not html_dir.exists() or not html_dir.is_dir():
@@ -255,141 +382,31 @@ def main():
         "disable_image_extraction": True,
         "force_ocr": False,
     }
-    config_parser = ConfigParser(config)
-    renderer_config = config_parser.generate_config_dict()
-
-    converter = PdfConverter(
-        config=renderer_config,
-        artifact_dict=create_model_dict(),
-        processor_list=config_parser.get_processors(),
-        renderer=config_parser.get_renderer(),
-        llm_service=config_parser.get_llm_service(),
-    )
-
-    markdown_renderer = MarkdownRenderer(renderer_config)
-    # html_renderer = HTMLRenderer(renderer_config)
-    # json_renderer = JSONRenderer({**renderer_config, "extract_images": False})
-
-    html_paths = sorted(list(html_dir.rglob("*.html")) + list(html_dir.rglob("*.htm")))
-    if not html_paths:
-        raise RuntimeError(f"No HTML files found under: {html_dir}")
-    logger.info(f"Found {len(html_paths)} HTML files to process under {html_dir}")
-
-    if args.workers < 1:
-        raise RuntimeError("--workers must be >= 1")
-
-    thread_state = local()
-
-    # FIXME: this doesn't work bcos of pytorch model.
-    # need to use pytorch multiprocessing ?
-    def get_pipeline() -> tuple[PdfConverter, MarkdownRenderer]:
-        pipeline = getattr(thread_state, "pipeline", None)
-        if pipeline is not None:
-            return pipeline
-
-        thread_converter = PdfConverter(
-            config=renderer_config,
-            artifact_dict=create_model_dict(),
-            processor_list=config_parser.get_processors(),
-            renderer=config_parser.get_renderer(),
-            llm_service=config_parser.get_llm_service(),
-        )
-        thread_markdown_renderer = MarkdownRenderer(renderer_config)
-        thread_state.pipeline = (thread_converter, thread_markdown_renderer)
-        return thread_state.pipeline
-
-    def process_one(html_file_path: Path) -> tuple[Path, int, int]:
-        thread_converter, thread_markdown_renderer = (
-            (converter, markdown_renderer) if args.workers == 1 else get_pipeline()
-        )
-
-        rel_path = html_file_path.relative_to(html_dir)
-        pdf_path = (pdf_root / rel_path).with_suffix(".pdf")
-        md_path = (md_root / rel_path).with_suffix(".md")
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        md_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Processing {html_file_path} -> {pdf_path}, {md_path}")
-
-        debug_dir = debug_root / rel_path.parent / rel_path.stem
-        debug_dir.mkdir(parents=True, exist_ok=True)
-
-        # 1. convert HTML to PDF
-        source_url = f"file://{html_file_path.absolute()}"
-        weasyprint.HTML(source_url).write_pdf(str(pdf_path), stylesheets=[CSS_STYLESHEET])
-        logger.success(f"Wrote intermediate PDF to {pdf_path}")
-
-        # 2. convert PDF to document (so we can save multiple renderings/artifacts)
-        # each 10Q usually requires ~40 LLM calls for LLMTableProcessor
-        document = thread_converter.build_document(str(pdf_path))
-        logger.success(f"Converted PDF to Marker document for {rel_path}")
-
-        rendered = thread_markdown_renderer(document)
-        logger.success(f"Rendered markdown for {rel_path}")
-
-        llm_err_total, page_cnt = count_llm_errors(rendered)
-        logger.info(f"{rel_path}: {llm_err_total=} out of {page_cnt=}")
-
-        with open(md_path, "w") as f:
-            f.write(rendered.markdown)
-
-        with open(debug_dir / "metadata.json", "w") as f:
-            json.dump(rendered.metadata, f, indent=2)
-
-        # also save HTML and JSON renderings for debugging
-        # html_out = html_renderer(document)
-        # with open(debug_dir / "document.html", "w") as f:
-        #     f.write(html_out.html)
-
-        # json_out = json_renderer(document)
-        # with open(debug_dir / "document.json", "w") as f:
-        #     f.write(json_out.model_dump_json(indent=2))
-
-        with open(debug_dir / "run_info.json", "w") as f:
-            json.dump(
-                {
-                    "input_html": str(html_file_path),
-                    "output_pdf": str(pdf_path),
-                    "output_markdown": str(md_path),
-                    "args": {
-                        "html_dir": args.html_dir,
-                        "output_dir": args.output_dir,
-                        "openai_base_url": args.openai_base_url,
-                        "openai_model": args.openai_model,
-                        "openai_system_prompt": args.openai_system_prompt,
-                        "openai_temperature": args.openai_temperature,
-                        "timeout": args.timeout,
-                        "max_retries": args.max_retries,
-                        "max_concurrency": args.max_concurrency,
-                        "workers": args.workers,
-                    },
-                    "config": renderer_config,
-                    "llm_error_count": llm_err_total,
-                    "page_count": page_cnt,
-                    "llm_error_ratio": llm_err_total / page_cnt if page_cnt > 0 else None,
-                },
-                f,
-                indent=2,
-            )
-
-        logger.success(f"Finished processing {rel_path}")
-        return rel_path, llm_err_total, page_cnt
 
     if args.workers == 1:
+        gpu_ids = [gpu.strip() for gpu in args.gpu_ids.split(",") if gpu.strip()]
+        init_worker(config, gpu_ids)
         logger.info("Processing HTML files sequentially with a single worker")
+        args_dict = args.to_dict()
         for html_file_path in tqdm(html_paths, desc="Processing HTML files", unit="file"):
-            process_one(html_file_path)
+            process_one(html_file_path, html_dir, pdf_root, md_root, debug_root, args_dict)
         return
 
-    raise RuntimeError("Multiprocessing with more than 1 worker is currently disabled.")
+    args_dict = args.to_dict()
+    ctx = mp.get_context("spawn")
     logger.info(f"Processing HTML files in parallel with {args.workers} workers")
     failures: list[Path] = []
-    with ThreadPoolExecutor(max_workers=args.workers) as executor:
-        futures = {executor.submit(process_one, p): p for p in html_paths}
+    gpu_ids = [gpu.strip() for gpu in args.gpu_ids.split(",") if gpu.strip()]
+    with ProcessPoolExecutor(
+        max_workers=args.workers, mp_context=ctx, initializer=init_worker, initargs=(config, gpu_ids)
+    ) as executor:
+        futures = {
+            executor.submit(process_one, p, html_dir, pdf_root, md_root, debug_root, args_dict): p for p in html_paths
+        }
         for future in tqdm(as_completed(futures), total=len(futures), desc="Processing HTML files", unit="file"):
             html_file_path = futures[future]
             try:
-                rel_path, llm_err_total, page_cnt = future.result()
-                logger.info(f"{rel_path}: {llm_err_total=} out of {page_cnt=}")
+                future.result()
             except Exception:
                 failures.append(html_file_path)
                 logger.exception(f"Failed processing: {html_file_path}")
