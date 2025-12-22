@@ -21,6 +21,7 @@ class DocChunk:
 
     def as_payload(self) -> dict:
         payload = {
+            "chunk_id": self.id,
             "doc_id": self.doc_id,
             "page_no": self.page_no,
             "headings": self.headings,
