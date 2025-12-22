@@ -11,6 +11,7 @@ dependencies = [
     "httpx>=0.28.1",
     "huggingface-hub",
     "judgy>=0.1.0",
+    "langsmith",
     "loguru",
     "marker-pdf[full]",
     "matplotlib>=3.10.3",
@@ -35,6 +36,7 @@ dependencies = [
     "tqdm>=4.67.1",
     "uvicorn>=0.35.0",
     "WeasyPrint",
+    "yfinance",
     # for some reason, including this causes uv pip install -e ".[dev]"
     # to hang. comment this out and manually install it.
     # "vllm",
