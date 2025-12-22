@@ -156,16 +156,10 @@ def parse_args() -> Args:
         help="Resolve ticker->company name (yahoo requires `yfinance` and network access).",
     )
     parser.add_argument(
-        "--section-neighbor-window",
-        type=int,
-        default=2,
-        help="SectionLinkPostprocessor neighbor window size.",
+        "--section-neighbor-window", type=int, default=2, help="SectionLinkPostprocessor neighbor window size."
     )
     parser.add_argument(
-        "--max-summary-chars",
-        type=int,
-        default=300,
-        help="HeuristicSummaryPostprocessor max summary length.",
+        "--max-summary-chars", type=int, default=300, help="HeuristicSummaryPostprocessor max summary length."
     )
 
     args = parser.parse_args()
@@ -291,9 +285,7 @@ def main() -> int:
     logger.info(f"Logging to: {log_path}")
 
     md_files = [
-        p
-        for p in _iter_markdown_files(markdown_root, pattern=args.pattern, recursive=args.recursive)
-        if p.is_file()
+        p for p in _iter_markdown_files(markdown_root, pattern=args.pattern, recursive=args.recursive) if p.is_file()
     ]
     md_files.sort()
 
@@ -317,9 +309,7 @@ def main() -> int:
     processed = 0
     total_chunks = 0
 
-    with doc_index_path.open("a", encoding="utf-8") as doc_index_f, errors_path.open(
-        "a", encoding="utf-8"
-    ) as errors_f:
+    with doc_index_path.open("a", encoding="utf-8") as doc_index_f, errors_path.open("a", encoding="utf-8") as errors_f:
         for md_path in tqdm(md_files, desc="chunking markdown"):
             rel = md_path.resolve().relative_to(markdown_root).as_posix()
             out_path = (output_chunks_root / rel).with_suffix(".jsonl")
@@ -364,7 +354,9 @@ def main() -> int:
         "doc_index_path": str(doc_index_path),
         "errors_path": str(errors_path),
     }
-    run_info_path.write_text(json.dumps(run_info, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
+    run_info_path.write_text(
+        json.dumps(run_info, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8"
+    )
 
     logger.success(f"Done. processed_files={processed} total_chunks={total_chunks}")
     logger.success(f"Wrote: {doc_index_path}")

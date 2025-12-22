@@ -68,9 +68,7 @@ def parse_args() -> Args:
         help="Directory produced by `scripts/ingest.py` (must contain doc_index.jsonl and chunks/).",
     )
     parser.add_argument(
-        "--storage-path",
-        default=None,
-        help="Qdrant storage path (defaults to env QDRANT_STORAGE_PATH if set).",
+        "--storage-path", default=None, help="Qdrant storage path (defaults to env QDRANT_STORAGE_PATH if set)."
     )
     parser.add_argument("--collection-name", default="rag_chunks", help="Qdrant collection name.")
     parser.add_argument(
@@ -84,9 +82,7 @@ def parse_args() -> Args:
         help="FastEmbed model name when --llm-provider fastembed.",
     )
     parser.add_argument(
-        "--cache-dir",
-        default=None,
-        help="Directory to use for model caches/temp files (keeps writes inside the repo).",
+        "--cache-dir", default=None, help="Directory to use for model caches/temp files (keeps writes inside the repo)."
     )
     parser.add_argument("--max-docs", type=int, default=None, help="Optional cap on number of documents to index.")
     parser.add_argument(
@@ -94,12 +90,7 @@ def parse_args() -> Args:
         action="store_true",
         help="Delete and recreate the collection before indexing (destructive).",
     )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=128,
-        help="Embed/upsert batch size (within a document).",
-    )
+    parser.add_argument("--batch-size", type=int, default=128, help="Embed/upsert batch size (within a document).")
 
     args = parser.parse_args()
 
