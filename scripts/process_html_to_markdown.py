@@ -1,15 +1,19 @@
 import argparse
 import json
+import multiprocessing as mp
 import os
+
+# import random
+import re
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from threading import local
 from typing import Annotated, List
 
 import PIL
 import weasyprint
+from langsmith.wrappers import wrap_openai
 from loguru import logger
 from marker.config.parser import ConfigParser
 from marker.converters.pdf import PdfConverter
@@ -26,6 +30,10 @@ from pydantic import BaseModel
 from tqdm import tqdm
 
 marker_logger = get_logger()
+
+_worker_converter: PdfConverter | None = None
+_worker_markdown_renderer: MarkdownRenderer | None = None
+_worker_renderer_config: dict | None = None
 
 
 class CustomOpenAIService(BaseOpenAIService):
@@ -49,7 +57,7 @@ class CustomOpenAIService(BaseOpenAIService):
         if timeout is None:
             timeout = self.timeout
 
-        client = self.get_client()
+        client = wrap_openai(self.get_client())
         image_data = self.format_image_for_llm(image)
 
         messages = []
