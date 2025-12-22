@@ -195,8 +195,7 @@ class DocumentContextPostprocessor:
         r"^(?P<ticker>[A-Za-z0-9.]+)_(?P<accession>\d{18})_(?P<form>[^_]+)_(?P<date>\d{4}-\d{2}-\d{2})$"
     )
     _PERIOD_ENDED_RE = re.compile(
-        r"for the (?:quarterly period|fiscal year) ended\s+(?P<date>[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
-        re.IGNORECASE,
+        r"for the (?:quarterly period|fiscal year) ended\s+(?P<date>[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})", re.IGNORECASE
     )
 
     def __init__(
@@ -413,7 +412,7 @@ class HeuristicSummaryPostprocessor:
         return text[: max(0, limit - 1)].rstrip() + "…"
 
     def _summarize_table(self, text: str, headings: list[str]) -> str:
-        # TODO: tables are not being captured. 
+        # TODO: tables are not being captured.
         lines = [ln for ln in text.splitlines() if ln.strip() and ln != "```"]
         header = lines[0].strip()
         cols = [c.strip() for c in header.strip("|").split("|")]

@@ -23,7 +23,11 @@ def build_context(chunks: Sequence[ScoredChunk], max_tokens: int) -> str:
     for sc in chunks:
         meta = f"[doc={sc.chunk.doc_id} page={sc.chunk.page_no} headings={'; '.join(sc.chunk.headings)}]"
         text = sc.chunk.text.strip()
-        block = f"{meta}\n{text}\n"
+        summary = (sc.chunk.metadata or {}).get("summary")
+        if summary:
+            block = f"{meta}\nSummary: {summary}\n{text}\n"
+        else:
+            block = f"{meta}\n{text}\n"
         if used + len(block) > budget_chars:
             break
         parts.append(block)
