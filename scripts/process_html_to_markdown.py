@@ -235,7 +235,7 @@ def extract_year_from_filename(html_path: Path) -> int | None:
     return int(match.group(1))
 
 
-def init_worker(config: dict, gpu_ids: list[str]) -> None:    
+def init_worker(config: dict, gpu_ids: list[str]) -> None:
     if gpu_ids:
         worker_index = get_worker_index()
         gpu_id = gpu_ids[(worker_index - 1) % len(gpu_ids)]
@@ -249,7 +249,7 @@ def init_worker(config: dict, gpu_ids: list[str]) -> None:
         except Exception as exc:  # noqa: BLE001 - best effort logging
             logger.warning(f"Unable to pin CUDA device for worker {worker_index}: {exc}")
         logger.info(f"Worker {worker_index} using GPU {gpu_id}")
-    
+
     global _worker_converter, _worker_markdown_renderer, _worker_renderer_config
     config_parser = ConfigParser(config)
     renderer_config = config_parser.generate_config_dict()

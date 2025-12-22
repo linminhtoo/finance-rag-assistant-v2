@@ -73,7 +73,9 @@ def fetch_10ks_for_tickers(tickers: list[str], output_dir: Path, per_company: in
     t2c = ticker_map()
     for t in tqdm(tickers, desc="fetching tickers"):
         cik = t2c[t.upper()]
-        for form_type, acc_no, primary, fdate in tqdm(list_10k_submissions(cik, per_company), desc=f"processing ticker {t}"):
+        for form_type, acc_no, primary, fdate in tqdm(
+            list_10k_submissions(cik, per_company), desc=f"processing ticker {t}"
+        ):
             html, src_url = download_primary(cik, acc_no, primary)
 
             base = f"{t.upper()}_{acc_no}_{form_type}_{fdate}"
