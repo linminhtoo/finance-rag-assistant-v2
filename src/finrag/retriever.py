@@ -1,4 +1,5 @@
-from typing import Optional
+import uuid
+from typing import Any, Optional
 
 import numpy as np
 from qdrant_client import QdrantClient
@@ -21,6 +22,9 @@ class HybridRetriever:
         storage_path: str,
         collection_name: str = "rag_chunks",
         vector_dim: int | None = None,
+        *,
+        load_existing: bool = True,
+        load_batch_size: int = 512,
     ):
         self.llm = llm_client
         self.collection_name = collection_name
@@ -42,12 +46,63 @@ class HybridRetriever:
         self._bm25: Optional[BM25Okapi] = None
         self._bm25_corpus: list[list[str]] = []
         self._bm25_chunk_ids: list[str] = []
+        self._qdrant_id_by_chunk_id: dict[str, str] = {}
+
+        if load_existing and self.qdrant.collection_exists(collection_name):
+            self._load_existing(batch_size=load_batch_size)
+
+    @staticmethod
+    def _qdrant_id_for_chunk_id(chunk_id: str) -> str:
+        # Local Qdrant expects UUID-like point IDs; make a deterministic UUID from chunk_id.
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, chunk_id))
+
+    @staticmethod
+    def _chunk_from_payload(point_id: str, payload: dict[str, Any]) -> DocChunk:
+        return DocChunk(
+            id=str(payload.get("chunk_id") or point_id),
+            doc_id=str(payload.get("doc_id") or ""),
+            text=str(payload.get("text") or ""),
+            page_no=payload.get("page_no"),
+            headings=list(payload.get("headings") or []),
+            source=str(payload.get("source") or ""),
+            metadata=payload.get("metadata") if isinstance(payload.get("metadata"), dict) else None,
+        )
+
+    def _load_existing(self, *, batch_size: int = 512) -> None:
+        offset = None
+        seen = 0
+        while True:
+            records, offset = self.qdrant.scroll(
+                collection_name=self.collection_name,
+                limit=batch_size,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            if not records:
+                break
+            for rec in records:
+                if rec.payload is None:
+                    continue
+                payload = dict(rec.payload)
+                point_id = str(rec.id)
+                ch = self._chunk_from_payload(point_id, payload)
+                self.chunks_by_id[point_id] = ch
+                self._qdrant_id_by_chunk_id[ch.id] = point_id
+                text = (ch.metadata or {}).get("index_text") or ch.text
+                self._bm25_corpus.append(str(text).split())
+                self._bm25_chunk_ids.append(point_id)
+                seen += 1
+            if offset is None:
+                break
+        if self._bm25_corpus:
+            self._bm25 = BM25Okapi(self._bm25_corpus)
 
     def index(self, chunks: list[DocChunk]) -> None:
         if not chunks:
             return
 
-        texts = [c.text for c in chunks]
+        texts = [(c.metadata or {}).get("index_text") or c.text for c in chunks]
         embeddings = self.llm.embed_texts(texts)
         dim = int(embeddings.shape[1])
         if not self.qdrant.collection_exists(self.collection_name):
@@ -60,16 +115,20 @@ class HybridRetriever:
 
         points = []
         for emb, chunk in zip(embeddings, chunks):
-            self.chunks_by_id[chunk.id] = chunk
-            points.append(PointStruct(id=chunk.id, vector=emb.tolist(), payload=chunk.as_payload()))
+            point_id = self._qdrant_id_for_chunk_id(chunk.id)
+            self.chunks_by_id[point_id] = chunk
+            self._qdrant_id_by_chunk_id[chunk.id] = point_id
+            points.append(PointStruct(id=point_id, vector=emb.tolist(), payload=chunk.as_payload()))
 
         self.qdrant.upsert(collection_name=self.collection_name, points=points, wait=True)
 
         # BM25
+        # TODO: should we add some preprocessing like lowercasing, removing stopwords, etc.?
         for chunk in chunks:
-            tokens = chunk.text.split()
+            text = (chunk.metadata or {}).get("index_text") or chunk.text
+            tokens = text.split()
             self._bm25_corpus.append(tokens)
-            self._bm25_chunk_ids.append(chunk.id)
+            self._bm25_chunk_ids.append(self._qdrant_id_by_chunk_id[chunk.id])
         self._bm25 = BM25Okapi(self._bm25_corpus)
 
     def _semantic_search(self, query: str, top_k: int = 20) -> list[tuple]:
