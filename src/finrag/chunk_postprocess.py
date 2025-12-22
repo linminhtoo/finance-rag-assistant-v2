@@ -175,3 +175,191 @@ class SectionLinkPostprocessor:
         return chunks
 
 
+class DocumentContextPostprocessor:
+    """
+    Adds document-level context to each chunk under `chunk.metadata['doc']`.
+
+    Intended fields (when available):
+      - company, ticker, cik, accession
+      - filing_type (e.g. '10-Q'), filing_date (YYYY-MM-DD)
+      - period_end_date (YYYY-MM-DD) if detected
+      - filing_quarter (e.g. '2024Q3') and `filing_quarter_basis`
+
+    Data sources (best-effort):
+      - `chunk.source` filename pattern: TICKER_ACCESSION_FORM_YYYY-MM-DD(.md)
+      - `chunk.headings` (often includes the company name)
+      - early text chunks (for "For the quarterly period ended ...")
+    """
+
+    _FILENAME_RE = re.compile(
+        r"^(?P<ticker>[A-Za-z0-9.]+)_(?P<accession>\d{18})_(?P<form>[^_]+)_(?P<date>\d{4}-\d{2}-\d{2})$"
+    )
+    _PERIOD_ENDED_RE = re.compile(
+        r"for the (?:quarterly period|fiscal year) ended\s+(?P<date>[A-Za-z]{3,9}\s+\d{1,2},\s+\d{4})",
+        re.IGNORECASE,
+    )
+
+    def __init__(
+        self,
+        *,
+        scan_chunks: int = 15,
+        scan_chars_per_chunk: int = 2500,
+        company_name_resolver: CompanyNameResolver | None = None,
+        fallback_company_from_headings: bool = False,
+    ):
+        self.scan_chunks = int(scan_chunks)
+        self.scan_chars_per_chunk = int(scan_chars_per_chunk)
+        self.company_name_resolver = company_name_resolver
+        self.fallback_company_from_headings = bool(fallback_company_from_headings)
+
+    @staticmethod
+    def _ensure_meta(chunk: DocChunk) -> dict:
+        if chunk.metadata is None:
+            chunk.metadata = {}
+        return chunk.metadata
+
+    @staticmethod
+    def _parse_iso_date(s: str) -> date | None:
+        try:
+            return datetime.strptime(s, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_month_date(s: str) -> date | None:
+        for fmt in ("%B %d, %Y", "%b %d, %Y"):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    @staticmethod
+    def _quarter_label(d: date) -> str:
+        q = (d.month - 1) // 3 + 1
+        return f"{d.year}Q{q}"
+
+    @staticmethod
+    def _pick_company_from_headings(chunks: list[DocChunk]) -> str | None:
+        # Best-effort fallback only: pick a company-like heading (often "ASTERA LABS, INC.").
+        bad = ("united states securities and exchange commission", "table of contents")
+        company_tokens = (" inc", "inc.", " corp", "corporation", " ltd", "llc", " plc", " co", "company")
+
+        seen: set[str] = set()
+        headings: list[str] = []
+        for ch in chunks[:10]:
+            for h in ch.headings:
+                h = h.strip()
+                if not h or h in seen:
+                    continue
+                seen.add(h)
+                headings.append(h)
+
+        for h in headings:
+            h_cf = h.casefold()
+            if any(b in h_cf for b in bad):
+                continue
+            if any(tok in h_cf for tok in company_tokens):
+                return h
+
+        for h in headings:
+            h_cf = h.casefold()
+            if any(b in h_cf for b in bad):
+                continue
+            if h.isupper() and len(h) >= 8:
+                return h
+
+        return None
+
+    def _extract_from_filename(self, source: str) -> dict:
+        stem = Path(source).stem
+        m = self._FILENAME_RE.match(stem)
+        if not m:
+            return {}
+        ticker = m.group("ticker")
+        accession = m.group("accession")
+        form = m.group("form")
+        filing_date = self._parse_iso_date(m.group("date"))
+        cik = accession[:10] if len(accession) >= 10 else None
+        out = {
+            "ticker": ticker,
+            "accession": accession,
+            "cik": cik,
+            "filing_type": form,
+            "filing_date": filing_date.isoformat() if filing_date else None,
+        }
+        return {k: v for k, v in out.items() if v is not None}
+
+    def _extract_period_end(self, chunks: list[DocChunk]) -> date | None:
+        for ch in chunks[: self.scan_chunks]:
+            text = ch.text[: self.scan_chars_per_chunk]
+            m = self._PERIOD_ENDED_RE.search(text)
+            if not m:
+                continue
+            d = self._parse_month_date(m.group("date"))
+            if d:
+                return d
+        return None
+
+    def process(self, chunks: list[DocChunk]) -> list[DocChunk]:
+        by_doc: dict[str, list[DocChunk]] = defaultdict(list)
+        for ch in chunks:
+            by_doc[ch.doc_id].append(ch)
+
+        for doc_id, group in by_doc.items():
+            source = group[0].source
+            doc_ctx: dict = {}
+
+            doc_ctx.update(self._extract_from_filename(source))
+
+            existing_doc = (group[0].metadata or {}).get("doc")
+            existing_doc = existing_doc if isinstance(existing_doc, dict) else {}
+            ticker = existing_doc.get("ticker") or doc_ctx.get("ticker")
+            cik = existing_doc.get("cik") or doc_ctx.get("cik")
+
+            if not existing_doc.get("company") and self.company_name_resolver is not None:
+                company = self.company_name_resolver.resolve(
+                    ticker=str(ticker) if isinstance(ticker, str) else None,
+                    cik=str(cik) if isinstance(cik, str) else None,
+                )
+                if company:
+                    logger.info(f"Resolved company name for ticker={ticker}: {company}")
+                    doc_ctx["company"] = company
+            elif not existing_doc.get("company") and self.fallback_company_from_headings:
+                company = self._pick_company_from_headings(group)
+                if company:
+                    doc_ctx["company"] = company
+
+            period_end = self._extract_period_end(group)
+            if period_end:
+                doc_ctx["period_end_date"] = period_end.isoformat()
+
+            # filing_quarter: prefer period_end_date; fall back to filing_date.
+            basis = None
+            quarter_date = period_end
+            if quarter_date is not None:
+                basis = "period_end_date"
+            else:
+                filing_date_s = doc_ctx.get("filing_date")
+                quarter_date = self._parse_iso_date(filing_date_s) if isinstance(filing_date_s, str) else None
+                basis = "filing_date" if quarter_date else None
+            if quarter_date:
+                doc_ctx["filing_quarter"] = self._quarter_label(quarter_date)
+                if basis:
+                    doc_ctx["filing_quarter_basis"] = basis
+
+            # Attach to all chunks, merging with any existing keys.
+            for ch in group:
+                meta = self._ensure_meta(ch)
+                existing = meta.get("doc")
+                if isinstance(existing, dict):
+                    merged = dict(existing)
+                    for k, v in doc_ctx.items():
+                        merged.setdefault(k, v)
+                    meta["doc"] = merged
+                else:
+                    meta["doc"] = dict(doc_ctx)
+
+        return chunks
+
+
