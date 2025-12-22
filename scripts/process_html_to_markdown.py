@@ -152,6 +152,11 @@ class Args:
     max_retries: int
     max_concurrency: int
     workers: int
+    gpu_ids: str
+    year_cutoff: int | None
+
+    def to_dict(self) -> dict:
+        return asdict(self)
 
 
 def parse_args() -> Args:
@@ -177,6 +182,15 @@ def parse_args() -> Args:
         default=1,
         help="Number of parallel workers over HTML files (effective LLM concurrency ~= workers * max_concurrency).",
     )
+    parser.add_argument(
+        "--year-cutoff",
+        type=int,
+        default=None,
+        help="Only process filings from this year (YYYY) based on the filename date.",
+    )
+    parser.add_argument(
+        "--gpu-ids", default="", help="Optional comma-separated GPU ids to round-robin across workers (e.g., '0,1')."
+    )
     args = parser.parse_args()
     return Args(
         html_dir=args.html_dir,
@@ -189,6 +203,8 @@ def parse_args() -> Args:
         max_retries=args.max_retries,
         max_concurrency=args.max_concurrency,
         workers=args.workers,
+        gpu_ids=args.gpu_ids,
+        year_cutoff=args.year_cutoff,
     )
 
 
