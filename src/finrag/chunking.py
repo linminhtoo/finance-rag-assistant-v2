@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 
 from finrag.dataclasses import DocChunk
+from finrag.chunk_postprocess import ChunkPostprocessor, ChunkPostprocessorPipeline
 
 if TYPE_CHECKING:
     from finrag.ocr import MistralOCRClient
@@ -35,12 +36,16 @@ class DoclingHybridChunker:
         mistral_ocr_client: Optional["MistralOCRClient"] = None,
         preprocess_markdown_tables: bool = False,
         markdown_table_fence_lang: str = "text",
+        tokenizer_kwargs: dict[str, Any] | None = None,
+        chunk_postprocessors: Optional[list[ChunkPostprocessor]] = None,
     ):
         # Docling converter (PDF / DOCX / Markdown -> DoclingDocument)
         self.converter = DocumentConverter()
 
         # Tokenizer for HybridChunker (HuggingFace-based)
-        self.tokenizer = HuggingFaceTokenizer.from_pretrained(model_name=tokenizer_model, max_tokens=max_tokens)
+        self.tokenizer = HuggingFaceTokenizer.from_pretrained(
+            model_name=tokenizer_model, max_tokens=max_tokens, **(tokenizer_kwargs or {})
+        )
 
         # HybridChunker does the real token-aware splitting+merging
         self.hybrid_chunker = HybridChunker(
@@ -56,6 +61,7 @@ class DoclingHybridChunker:
         self.mistral_ocr_client = mistral_ocr_client
         self.preprocess_markdown_tables = preprocess_markdown_tables
         self._md_table_fencer = MarkdownTableCodeFencer(fence_lang=markdown_table_fence_lang)
+        self._postprocess = ChunkPostprocessorPipeline(chunk_postprocessors) if chunk_postprocessors else None
 
     # --- Internal helpers -------------------------------------------------
 
@@ -167,6 +173,8 @@ class DoclingHybridChunker:
                 )
             )
 
+        if self._postprocess is not None:
+            chunks = self._postprocess.process(chunks)
         return chunks
 
     def iter_chunk_documents(self, sources: Iterable[str]) -> Iterable[DocChunk]:
