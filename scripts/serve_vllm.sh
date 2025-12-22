@@ -32,14 +32,14 @@ export OTEL_EXPORTER_OTLP_TRACES_INSECURE=true
 vllm serve allenai/olmOCR-2-7B-1025 \
     --tensor-parallel-size 2 \
     --disable-custom-all-reduce \
-    --max-model-len 32768 \
-    --gpu-memory-utilization 0.7 \
-    --max-num-batched-token 64 \
+    --max-model-len 65000 \
+    --gpu-memory-utilization 0.725 \
+    --max-num-batched-token 32 \
     --host 0.0.0.0 \
     --port 8989 \
     --api-key test \
     --otlp-traces-endpoint grpc://127.0.0.1:4317 \
-    2>&1 | tee serve_vllm_olmocr_2_7b_tp2_disableAR_$now.log
+    2>&1 | tee ../logs/vllm_process_pdf/serve_vllm_olmocr_2_7b_tp2_disableAR_$now.log
 
 # ERROR: both FP8 and BF16 versions need cuda 12.9 ... we are still on cuda 12.8
 # solution is to `sudo apt-get install cuda-compat-12-9`

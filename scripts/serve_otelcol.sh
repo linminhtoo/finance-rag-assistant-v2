@@ -6,7 +6,7 @@
 
 now=$(date +"%Y%m%d_%H%M%S")
 ./otelcol --config ./otelcol-config.yaml \
-    2>&1 | tee otelcol_ingest_html_to_markdown.$now.log
+    2>&1 | tee ../logs/otelcol_ingest_html_to_markdown.$now.log
 
 # now=$(date +"%Y%m%d_%H%M%S")
 # ./otelcol --config ./otelcol-config.yaml \
