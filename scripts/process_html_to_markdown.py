@@ -364,6 +364,33 @@ def main():
     if not openai_api_key:
         raise RuntimeError("Set OPENAI_API_KEY before running so the OpenAI llm_service can authenticate.")
 
+    html_paths = sorted(list(html_dir.rglob("*.html")) + list(html_dir.rglob("*.htm")))
+    if not html_paths:
+        raise RuntimeError(f"No HTML files found under: {html_dir}")
+    logger.info(f"Found {len(html_paths)} HTML files to process under {html_dir}")
+
+    if args.year_cutoff is not None:
+        filtered: list[Path] = []
+        skipped_missing_date: list[Path] = []
+        for html_path in html_paths:
+            year = extract_year_from_filename(html_path)
+            if year is None:
+                skipped_missing_date.append(html_path)
+                continue
+            if year >= args.year_cutoff:
+                filtered.append(html_path)
+        if skipped_missing_date:
+            logger.warning(
+                "Skipped %s HTML files without a YYYY-MM-DD suffix in the filename.", len(skipped_missing_date)
+            )
+        html_paths = filtered
+        if not html_paths:
+            raise RuntimeError(f"No HTML files found for year >= {args.year_cutoff} under: {html_dir}")
+        logger.info(f"Filtered to {len(html_paths)} HTML files for year >= {args.year_cutoff}")
+
+    if args.workers < 1:
+        raise RuntimeError("--workers must be >= 1")
+
     config = {
         "output_format": "markdown",
         "use_llm": True,
