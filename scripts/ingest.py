@@ -5,8 +5,6 @@ This script focuses on chunking + exporting chunks (and metadata) to disk.
 Indexing into a vector store can be done as a separate step.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -21,33 +19,14 @@ from typing import Any, Iterable
 from loguru import logger
 from tqdm import tqdm
 
-
-def _ensure_src_on_path() -> None:
-    """
-    Make `import finrag` work when running as `python scripts/ingest.py`.
-    """
-
-    try:
-        import finrag  # noqa: F401
-
-        return
-    except Exception:
-        pass
-
-    project_root = Path(__file__).resolve().parents[1]
-    sys.path.insert(0, str(project_root / "src"))
-
-
-_ensure_src_on_path()
-
-from finrag.chunk_postprocess import (  # noqa: E402
+from finrag.chunk_postprocess import (
     DocumentContextPostprocessor,
     HeuristicSummaryPostprocessor,
     SectionLinkPostprocessor,
     YahooFinanceCompanyNameResolver,
 )
-from finrag.chunking import DoclingHybridChunker  # noqa: E402
-from finrag.dataclasses import DocChunk  # noqa: E402
+from finrag.chunking import DoclingHybridChunker
+from finrag.dataclasses import DocChunk
 
 
 @dataclass
@@ -116,7 +95,7 @@ def parse_args() -> Args:
         action="store_false",
         help="Allow HuggingFace/transformers to download models if needed.",
     )
-    parser.set_defaults(hf_offline=True)
+    parser.set_defaults(hf_online=True)
 
     # Chunker options
     parser.add_argument(
