@@ -369,7 +369,7 @@ def main():
     if not openai_api_key:
         raise RuntimeError("Set OPENAI_API_KEY before running so the OpenAI llm_service can authenticate.")
 
-    html_paths = sorted(list(html_dir.rglob("*.html")) + list(html_dir.rglob("*.htm")))
+    html_paths = list(html_dir.rglob("*.html")) + list(html_dir.rglob("*.htm"))
     if not html_paths:
         raise RuntimeError(f"No HTML files found under: {html_dir}")
     logger.info(f"Found {len(html_paths)} HTML files to process under {html_dir}")
@@ -392,6 +392,15 @@ def main():
         if not html_paths:
             raise RuntimeError(f"No HTML files found for year >= {args.year_cutoff} under: {html_dir}")
         logger.info(f"Filtered to {len(html_paths)} HTML files for year >= {args.year_cutoff}")
+
+    # Sort by year (desc) based on the expected YYYY-MM-DD filename suffix; files without a date suffix go last.
+    def _html_sort_key(p: Path) -> tuple[int, int, str]:
+        year = extract_year_from_filename(p)
+        if year is None:
+            return (1, 0, p.as_posix())
+        return (0, -year, p.as_posix())
+
+    html_paths.sort(key=_html_sort_key)
 
     if args.workers < 1:
         raise RuntimeError("--workers must be >= 1")
