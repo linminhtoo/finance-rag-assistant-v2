@@ -33,10 +33,17 @@ class QueryResponse(BaseModel):
     top_chunks: list[TopChunk]
 
 
+def build_hybrid_retriever(storage_path: str) -> HybridRetriever:
+    bm25_path = os.getenv("BM25_PATH")
+    if bm25_path:
+        bm25_path = os.path.expanduser(bm25_path)
+    return HybridRetriever(get_llm_client(), storage_path=storage_path, bm25_path=bm25_path)
+
+
 class RAGService:
     def __init__(self, storage_path: str):
         self.llm = get_llm_client()
-        self.retriever = HybridRetriever(self.llm, storage_path=storage_path)
+        self.retriever = build_hybrid_retriever(storage_path)
         self.reranker = CrossEncoderReranker()
 
         # Two chunkers: with and without Mistral OCR
