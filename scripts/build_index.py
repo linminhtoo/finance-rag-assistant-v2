@@ -10,11 +10,10 @@ This script embeds and upserts the chunks into a local Qdrant store.
 BM25 is rebuilt at runtime from stored Qdrant payloads in `HybridRetriever`.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import os
+import signal
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -24,24 +23,9 @@ from typing import Any, Iterable
 from loguru import logger
 from tqdm import tqdm
 
-
-def _ensure_src_on_path() -> None:
-    try:
-        import finrag  # noqa: F401
-
-        return
-    except Exception:
-        pass
-
-    project_root = Path(__file__).resolve().parents[1]
-    sys.path.insert(0, str(project_root / "src"))
-
-
-_ensure_src_on_path()
-
-from finrag.dataclasses import DocChunk  # noqa: E402
-from finrag.llm_clients import get_llm_client  # noqa: E402
-from finrag.retriever import HybridRetriever  # noqa: E402
+from finrag.dataclasses import DocChunk
+from finrag.llm_clients import get_llm_client
+from finrag.retriever import HybridRetriever
 
 
 @dataclass
@@ -52,6 +36,7 @@ class Args:
     llm_provider: str | None
     fastembed_model: str
     cache_dir: str | None
+    bm25_path: str | None
     max_docs: int | None
     overwrite_collection: bool
     batch_size: int
@@ -84,6 +69,9 @@ def parse_args() -> Args:
     parser.add_argument(
         "--cache-dir", default=None, help="Directory to use for model caches/temp files (keeps writes inside the repo)."
     )
+    parser.add_argument(
+        "--bm25-path", default=None, help="Where to persist BM25 data (defaults to <ingest_output_dir>/bm25.pkl)."
+    )
     parser.add_argument("--max-docs", type=int, default=None, help="Optional cap on number of documents to index.")
     parser.add_argument(
         "--overwrite-collection",
@@ -105,6 +93,7 @@ def parse_args() -> Args:
         llm_provider=args.llm_provider,
         fastembed_model=args.fastembed_model,
         cache_dir=args.cache_dir,
+        bm25_path=args.bm25_path,
         max_docs=args.max_docs,
         overwrite_collection=bool(args.overwrite_collection),
         batch_size=args.batch_size,
@@ -157,6 +146,7 @@ def main() -> int:
     args = parse_args()
     ingest_out = Path(args.ingest_output_dir).expanduser().resolve()
     doc_index_path = ingest_out / "doc_index.jsonl"
+    bm25_path = Path(args.bm25_path).expanduser().resolve() if args.bm25_path else (ingest_out / "bm25.pkl").resolve()
 
     if not doc_index_path.exists():
         raise SystemExit(f"Missing required file: {doc_index_path}")
@@ -195,6 +185,7 @@ def main() -> int:
         storage_path=args.storage_path,
         collection_name=args.collection_name,
         load_existing=not args.overwrite_collection,
+        bm25_path=str(bm25_path),
     )
 
     if args.overwrite_collection and retriever.qdrant.collection_exists(args.collection_name):
@@ -209,24 +200,45 @@ def main() -> int:
     started_at = time.time()
     total_docs = 0
     total_chunks = 0
+    had_error = False
 
-    for doc in tqdm(docs, desc="indexing docs"):
-        chunks_path = Path(str(doc.get("chunks_path") or "")).expanduser()
-        if not chunks_path.is_absolute():
-            chunks_path = (ingest_out / chunks_path).resolve()
-        if not chunks_path.exists():
-            logger.warning(f"Missing chunk file, skipping: {chunks_path}")
-            continue
+    def _handle_signal(signum, _frame):
+        raise KeyboardInterrupt(f"Received signal {signum}")
 
-        doc_chunks = [_chunk_from_dict(d) for d in _iter_jsonl(chunks_path)]
-        if not doc_chunks:
-            continue
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
 
-        for batch in _batched(doc_chunks, batch_size=args.batch_size):
-            retriever.index(batch)
+    try:
+        for doc in tqdm(docs, desc="indexing docs"):
+            chunks_path = Path(str(doc.get("chunks_path") or "")).expanduser()
+            if not chunks_path.is_absolute():
+                chunks_path = (ingest_out / chunks_path).resolve()
+            if not chunks_path.exists():
+                logger.warning(f"Missing chunk file, skipping: {chunks_path}")
+                continue
 
-        total_docs += 1
-        total_chunks += len(doc_chunks)
+            doc_chunks = [_chunk_from_dict(d) for d in _iter_jsonl(chunks_path)]
+            if not doc_chunks:
+                continue
+
+            for batch in _batched(doc_chunks, batch_size=args.batch_size):
+                # NOTE: avoid repeatedly rebuilding BM25 until all docs are indexed
+                # TODO: look into alternative sparse retrieval indices like OpenSearch
+                retriever.index(batch, rebuild_bm25=False)
+
+            total_docs += 1
+            total_chunks += len(doc_chunks)
+    except BaseException as e:  # noqa: BLE001 - want to catch signals/interrupts too
+        had_error = True
+        logger.exception(f"Indexing interrupted: {e}")
+    finally:
+        if total_chunks > 0:
+            try:
+                retriever.rebuild_bm25()
+                retriever.save_bm25(str(bm25_path))
+                logger.info(f"Saved BM25 snapshot to: {bm25_path}")
+            except Exception as e:  # noqa: BLE001 - best-effort snapshot
+                logger.exception(f"Failed to save BM25 snapshot: {e}")
 
     out = {
         "args": args.to_dict(),
@@ -241,9 +253,12 @@ def main() -> int:
     run_info_path = ingest_out / "build_index_run_info.json"
     run_info_path.write_text(json.dumps(out, ensure_ascii=False, indent=2, default=_json_default), encoding="utf-8")
 
-    logger.success(f"Done. indexed_docs={total_docs} indexed_chunks={total_chunks}")
+    if had_error:
+        logger.warning(f"Indexing stopped early. indexed_docs={total_docs} indexed_chunks={total_chunks}")
+    else:
+        logger.success(f"Done. indexed_docs={total_docs} indexed_chunks={total_chunks}")
     logger.success(f"Wrote: {run_info_path}")
-    return 0
+    return 1 if had_error else 0
 
 
 if __name__ == "__main__":
