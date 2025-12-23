@@ -53,13 +53,11 @@ class CustomOpenAIService(BaseOpenAIService):
     hf_revision: Annotated[str, "Optional HuggingFace revision for hf_model_id."] = ""
     hf_trust_remote_code: Annotated[bool, "Pass trust_remote_code=True to transformers loaders."] = True
     hf_count_image_tokens: Annotated[
-        bool,
-        "When possible, include image tokens by using an AutoProcessor and decoding data URLs to PIL Images.",
+        bool, "When possible, include image tokens by using an AutoProcessor and decoding data URLs to PIL Images."
     ] = True
     log_prompt_token_count: Annotated[bool, "Log estimated prompt token counts before requesting the LLM."] = False
     max_prompt_tokens: Annotated[
-        int,
-        "If > 0, skip the LLM call when the estimated prompt tokens exceed this value (best-effort).",
+        int, "If > 0, skip the LLM call when the estimated prompt tokens exceed this value (best-effort)."
     ] = 0
 
     def get_client(self) -> openai.OpenAI:
@@ -67,10 +65,7 @@ class CustomOpenAIService(BaseOpenAIService):
         # LangSmith-traced request appear to run up to ~3x longer than `timeout`. We implement our
         # own retry loop below, so disable SDK retries for predictable timing.
         return openai.OpenAI(
-            api_key=self.openai_api_key,
-            base_url=self.openai_base_url,
-            max_retries=0,
-            timeout=self.openai_timeout
+            api_key=self.openai_api_key, base_url=self.openai_base_url, max_retries=0, timeout=self.openai_timeout
         )
 
     def __call__(
@@ -140,7 +135,7 @@ class CustomOpenAIService(BaseOpenAIService):
             try:
                 # if we use client.responses.parse(), we will get a response_id
                 # that we can POST an abort to vLLM if vLLM is not cancelling on its own
-                # however, based on testing, vLLM does cancel requests immediately once python process is killed 
+                # however, based on testing, vLLM does cancel requests immediately once python process is killed
                 # (not just ctrl+C but kill -9)
                 response = client.chat.completions.parse(
                     model=self.openai_model,
@@ -206,11 +201,7 @@ class CustomOpenAIService(BaseOpenAIService):
 
         elapsed_s = time.perf_counter() - start_time
         marker_logger.warning(
-            "CustomOpenAIService[%s] failed elapsed_s=%.3f attempts=%s/%s",
-            request_id,
-            elapsed_s,
-            tries,
-            total_tries,
+            "CustomOpenAIService[%s] failed elapsed_s=%.3f attempts=%s/%s", request_id, elapsed_s, tries, total_tries
         )
         return {}
 
@@ -301,9 +292,7 @@ def parse_args() -> Args:
         help="Enable trust_remote_code when loading the tokenizer/processor for token counting.",
     )
     parser.add_argument(
-        "--no-hf-count-image-tokens",
-        action="store_true",
-        help="Disable image token counting (only count text tokens).",
+        "--no-hf-count-image-tokens", action="store_true", help="Disable image token counting (only count text tokens)."
     )
     parser.add_argument(
         "--log-prompt-token-count",

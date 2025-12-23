@@ -42,19 +42,14 @@ def count_tokens_openai_messages(
         try:
             processor = _load_processor(model_id, revision=revision, trust_remote_code=trust_remote_code)
             total_tokens = _count_with_processor(
-                processor,
-                messages,
-                images,
-                add_generation_prompt=add_generation_prompt,
+                processor, messages, images, add_generation_prompt=add_generation_prompt
             )
             tokenizer = getattr(processor, "tokenizer", None) or _load_tokenizer(
                 model_id, revision=revision, trust_remote_code=trust_remote_code
             )
             text_only_messages = _strip_images_from_messages(messages)
             text_tokens = _count_with_tokenizer(
-                tokenizer,
-                text_only_messages,
-                add_generation_prompt=add_generation_prompt,
+                tokenizer, text_only_messages, add_generation_prompt=add_generation_prompt
             )
             image_tokens = max(0, total_tokens - text_tokens)
             model_max_length = _get_model_max_length(tokenizer)
@@ -130,11 +125,7 @@ def _count_with_tokenizer(tokenizer: Any, messages: list[dict[str, Any]], *, add
 
 
 def _count_with_processor(
-    processor: Any,
-    messages: list[dict[str, Any]],
-    images: list[Any],
-    *,
-    add_generation_prompt: bool,
+    processor: Any, messages: list[dict[str, Any]], images: list[Any], *, add_generation_prompt: bool
 ) -> int:
     if hasattr(processor, "apply_chat_template"):
         text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=add_generation_prompt)
@@ -197,9 +188,7 @@ def _fallback_messages_to_text(messages: list[dict[str, Any]]) -> str:
         if isinstance(content, str):
             text = content
         elif isinstance(content, list):
-            text = "\n".join(
-                str(c.get("text", "")) for c in content if isinstance(c, dict) and c.get("type") == "text"
-            )
+            text = "\n".join(str(c.get("text", "")) for c in content if isinstance(c, dict) and c.get("type") == "text")
         else:
             text = str(content)
         parts.append(f"{role}: {text}".strip())
