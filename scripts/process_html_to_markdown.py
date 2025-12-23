@@ -293,6 +293,8 @@ def process_one(
         logger.info(f"Outputs already exist; skipping: {rel_path}")
         return
 
+    t_start = time.perf_counter()
+
     # 1. convert HTML to PDF
     source_url = f"file://{html_file_path.absolute()}"
     weasyprint.HTML(source_url).write_pdf(str(pdf_path), stylesheets=[CSS_STYLESHEET])
@@ -341,6 +343,9 @@ def process_one(
         )
 
     logger.success(f"Finished processing {rel_path}")
+    t_end = time.perf_counter()
+    elapsed_s = t_end - t_start
+    logger.info(f"Elapsed time for {rel_path}: {elapsed_s:.2f}s")
     return
 
 
