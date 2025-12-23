@@ -1,4 +1,6 @@
+import pickle
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 
 import numpy as np
@@ -25,6 +27,7 @@ class HybridRetriever:
         *,
         load_existing: bool = True,
         load_batch_size: int = 512,
+        bm25_path: str | None = None,
     ):
         self.llm = llm_client
         self.collection_name = collection_name
@@ -47,9 +50,12 @@ class HybridRetriever:
         self._bm25_corpus: list[list[str]] = []
         self._bm25_chunk_ids: list[str] = []
         self._qdrant_id_by_chunk_id: dict[str, str] = {}
+        self._bm25_path = bm25_path
+        self._bm25_dirty = False
 
         if load_existing and self.qdrant.collection_exists(collection_name):
             self._load_existing(batch_size=load_batch_size)
+            self._load_bm25()
 
     @staticmethod
     def _qdrant_id_for_chunk_id(chunk_id: str) -> str:
@@ -98,7 +104,41 @@ class HybridRetriever:
         if self._bm25_corpus:
             self._bm25 = BM25Okapi(self._bm25_corpus)
 
-    def index(self, chunks: list[DocChunk]) -> None:
+    def _load_bm25(self) -> None:
+        if not self._bm25_path:
+            return
+        path = Path(self._bm25_path)
+        if not path.exists():
+            return
+        with path.open("rb") as f:
+            payload = pickle.load(f)
+        corpus = payload.get("corpus")
+        chunk_ids = payload.get("chunk_ids")
+        if isinstance(corpus, list) and isinstance(chunk_ids, list) and len(corpus) == len(chunk_ids):
+            self._bm25_corpus = corpus
+            self._bm25_chunk_ids = chunk_ids
+            self._bm25 = BM25Okapi(self._bm25_corpus)
+            self._bm25_dirty = False
+
+    def save_bm25(self, path: str | None = None) -> None:
+        out_path = Path(path or self._bm25_path or "")
+        if not out_path:
+            raise ValueError("BM25 path is not set")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"corpus": self._bm25_corpus, "chunk_ids": self._bm25_chunk_ids}
+        with out_path.open("wb") as f:
+            pickle.dump(payload, f)
+        self._bm25_dirty = False
+
+    def rebuild_bm25(self) -> None:
+        if not self._bm25_corpus:
+            self._bm25 = None
+            self._bm25_dirty = False
+            return
+        self._bm25 = BM25Okapi(self._bm25_corpus)
+        self._bm25_dirty = False
+
+    def index(self, chunks: list[DocChunk], *, rebuild_bm25: bool = True) -> None:
         if not chunks:
             return
 
@@ -129,7 +169,9 @@ class HybridRetriever:
             tokens = text.split()
             self._bm25_corpus.append(tokens)
             self._bm25_chunk_ids.append(self._qdrant_id_by_chunk_id[chunk.id])
-        self._bm25 = BM25Okapi(self._bm25_corpus)
+        self._bm25_dirty = True
+        if rebuild_bm25:
+            self.rebuild_bm25()
 
     def _semantic_search(self, query: str, top_k: int = 20) -> list[tuple]:
         q_emb = self.llm.embed_texts([query])[0]
