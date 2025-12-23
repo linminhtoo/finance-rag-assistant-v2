@@ -85,10 +85,7 @@ def run_eval(
             "coverage_rerank_doc": coverage_at_k(rerank_doc_ids, relevant_doc_ids, cfg.top_k_rerank),
             "mrr_hybrid_chunk": mrr(hybrid_chunk_ids, set(relevant_chunk_ids)),
             "mrr_rerank_chunk": mrr(rerank_chunk_ids, set(relevant_chunk_ids)),
-            "timing_ms": {
-                "retrieve_ms": (t1 - t0) * 1000.0,
-                "rerank_ms": (t2 - t1) * 1000.0,
-            },
+            "timing_ms": {"retrieve_ms": (t1 - t0) * 1000.0, "rerank_ms": (t2 - t1) * 1000.0},
         }
 
         if cfg.do_answer:
@@ -105,11 +102,7 @@ def run_eval(
             res["citation_hit"] = 1.0 if cited_doc_ids(final) & relevant_doc_ids else 0.0
 
             if item.expected_numeric and item.expected_numeric.value is not None:
-                nm = best_numeric_match(
-                    final,
-                    item.expected_numeric.value,
-                    expected_scale=item.expected_numeric.scale,
-                )
+                nm = best_numeric_match(final, item.expected_numeric.value, expected_scale=item.expected_numeric.scale)
                 res["numeric_matched"] = nm["matched"]
                 res["numeric_best_rel_error"] = nm["best_rel_error"]
                 res["numeric_best_pred"] = nm["best_pred"]

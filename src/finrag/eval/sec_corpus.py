@@ -52,4 +52,3 @@ def load_sec_download_dir(
             break
 
     return docs
-

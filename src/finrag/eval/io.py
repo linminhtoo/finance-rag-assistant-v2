@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Iterable
 
@@ -29,4 +28,3 @@ def dump_jsonl(items: Iterable[EvalItem], path: str | Path) -> None:
         for item in items:
             f.write(item.model_dump_json())
             f.write("\n")
-

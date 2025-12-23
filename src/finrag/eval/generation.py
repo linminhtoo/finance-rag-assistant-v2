@@ -4,7 +4,7 @@ import random
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any
 
 from finrag.dataclasses import DocChunk
 from finrag.eval.schema import Evidence, EvalItem, NumericAnswer
@@ -28,9 +28,7 @@ _METRIC_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
-_NUMBER_RE = re.compile(
-    r"(?P<num>\(?\s*\$?\s*\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*\)?)"
-)
+_NUMBER_RE = re.compile(r"(?P<num>\(?\s*\$?\s*\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*\)?)")
 
 _PERIOD_END_RE = re.compile(
     r"(?i)\b(?:quarter|three\s+months)\s+ended\s+"
@@ -190,7 +188,10 @@ def _maybe_paraphrase(llm: LLMClient | None, question: str) -> str:
     if llm is None:
         return question
     prompt = [
-        {"role": "system", "content": "Rewrite questions to be clear, specific, and unambiguous. Do not add new facts."},
+        {
+            "role": "system",
+            "content": "Rewrite questions to be clear, specific, and unambiguous. Do not add new facts.",
+        },
         {"role": "user", "content": f"Rewrite this question:\n{question}"},
     ]
     try:
@@ -278,7 +279,9 @@ def generate_eval_items_from_chunks(
                         kind="mixed",
                         tags=["sec", "synthetic", "mixed", "rnd", ticker, form],
                         expected_numeric=numeric,
-                        expected_key_points=_pick_key_points(chunk.text, ["research", "development", "R&D", "innovation"]),
+                        expected_key_points=_pick_key_points(
+                            chunk.text, ["research", "development", "R&D", "innovation"]
+                        ),
                         evidences=[
                             Evidence(
                                 doc_id=chunk.doc_id,
@@ -317,7 +320,12 @@ def generate_eval_items_from_chunks(
                             snippet=chunk.text[:800],
                         )
                     ],
-                    generation={"generator": "angle_keywords", "generated_at": now, "seed": seed, "angle": angle["tag"]},
+                    generation={
+                        "generator": "angle_keywords",
+                        "generated_at": now,
+                        "seed": seed,
+                        "angle": angle["tag"],
+                    },
                 )
             )
 
