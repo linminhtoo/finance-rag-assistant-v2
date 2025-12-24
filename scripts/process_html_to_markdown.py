@@ -467,7 +467,27 @@ def parse_args() -> Args:
         "--drop-back-pages",
         type=int,
         default=0,
-        help="Skip the last N pages of each PDF for Marker processing (0 = keep all).",
+        help="Skip the last N pages of each PDF for Marker processing (0 = keep all, -1 = SEC auto-detect).",
+    )
+    toc_group = parser.add_mutually_exclusive_group()
+    toc_group.add_argument(
+        "--strip-repeated-toc",
+        dest="strip_repeated_toc",
+        action="store_true",
+        default=True,
+        help="Strip repeated 'Table of Contents' backlink artifacts before Marker by re-rendering the PDF (default).",
+    )
+    toc_group.add_argument(
+        "--no-strip-repeated-toc",
+        dest="strip_repeated_toc",
+        action="store_false",
+        help="Disable stripping repeated 'Table of Contents' backlink artifacts before Marker.",
+    )
+    parser.add_argument(
+        "--save-cleaned-html",
+        action="store_true",
+        default=False,
+        help="When repeated ToC artifacts are stripped, save the cleaned HTML into the per-file debug folder.",
     )
     parser.add_argument(
         "--sectionheader-openai-model",
@@ -530,6 +550,8 @@ def parse_args() -> Args:
         disable_forms=args.disable_forms,
         drop_front_pages=args.drop_front_pages,
         drop_back_pages=args.drop_back_pages,
+        strip_repeated_toc=args.strip_repeated_toc,
+        save_cleaned_html=args.save_cleaned_html,
     )
 
 
@@ -777,6 +799,77 @@ def infer_sec_page_window(
         doc.close()
 
 
+def _first_nonempty_line(text: str) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return ""
+
+
+_TOC_LINK_RE = re.compile(r"(?is)<a\b[^>]*>\s*table\s+of\s+contents\s*</a>")
+
+
+def strip_table_of_contents_links_from_html(html: str) -> tuple[str, int]:
+    """
+    SEC filings often include repeated 'Table of Contents' backlink anchors throughout the HTML.
+    When paginated to PDF, these links frequently end up at the top of pages and contaminate OCR.
+    """
+    cleaned, count = _TOC_LINK_RE.subn("", html)
+    return cleaned, count
+
+
+def detect_repeated_toc_header_artifact(
+    pdf_path: Path,
+    *,
+    max_scan_pages: int = 60,
+    min_pages: int = 5,
+    min_ratio: float = 0.35,
+) -> tuple[bool, dict[str, Any]]:
+    """
+    Detect the common SEC artifact where 'Table of Contents' appears as the top line on many pages.
+
+    We exclude ToC *listing* pages (high ToC listing score) because they legitimately contain that heading.
+    """
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(str(pdf_path))
+    try:
+        page_count = len(doc)
+        scan_pages = min(max_scan_pages, page_count)
+
+        toc_topline_pages: list[int] = []
+        excluded_listing_pages: list[int] = []
+        considered_pages: list[int] = []
+        for i in range(scan_pages):
+            text = _pdfium_extract_page_text(doc, i)
+            if _sec_toc_listing_score(text) >= 6:
+                excluded_listing_pages.append(i)
+                continue
+            considered_pages.append(i)
+            if _first_nonempty_line(text).lower() == "table of contents":
+                toc_topline_pages.append(i)
+
+        considered_count = len(considered_pages)
+        toc_count = len(toc_topline_pages)
+        ratio = toc_count / considered_count if considered_count else 0.0
+        is_artifact = (toc_count >= min_pages) and (ratio >= min_ratio)
+        info = {
+            "page_count": page_count,
+            "scan_pages": scan_pages,
+            "considered_pages": considered_pages,
+            "excluded_listing_pages": excluded_listing_pages,
+            "toc_topline_pages": toc_topline_pages,
+            "toc_topline_count": toc_count,
+            "toc_topline_ratio": ratio,
+            "min_pages": min_pages,
+            "min_ratio": min_ratio,
+        }
+        return is_artifact, info
+    finally:
+        doc.close()
+
+
 def process_one(
     html_file_path: Path, html_dir: Path, pdf_root: Path, md_root: Path, debug_root: Path, args_dict: dict
 ) -> None:
@@ -888,6 +981,7 @@ def process_one(
                 "config": renderer_config,
                 "page_range": converter_config.get("page_range"),
                 "sec_auto_drop": sec_auto_drop_info,
+                "toc_artifact": toc_artifact_info,
                 "llm_error_count": llm_err_total,
                 "page_count": page_cnt,
                 "llm_error_ratio": llm_err_total / page_cnt if page_cnt > 0 else None,
