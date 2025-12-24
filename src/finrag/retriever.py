@@ -164,6 +164,8 @@ class HybridRetriever:
 
         # BM25
         # TODO: should we add some preprocessing like lowercasing, removing stopwords, etc.?
+        # TODO: add option for Milvus
+        # https://milvus.io/docs/contextual_retrieval_with_milvus.md
         for chunk in chunks:
             text = (chunk.metadata or {}).get("index_text") or chunk.text
             tokens = text.split()
