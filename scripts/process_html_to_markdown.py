@@ -364,6 +364,8 @@ class Args:
     disable_forms: bool
     drop_front_pages: int
     drop_back_pages: int
+    strip_repeated_toc: bool
+    save_cleaned_html: bool
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -459,7 +461,7 @@ def parse_args() -> Args:
         "--drop-front-pages",
         type=int,
         default=0,
-        help="Skip the first N pages of each PDF for Marker processing (0 = keep all).",
+        help="Skip the first N pages of each PDF for Marker processing (0 = keep all, -1 = SEC auto-detect).",
     )
     parser.add_argument(
         "--drop-back-pages",
@@ -603,6 +605,178 @@ def get_pdf_page_count(pdf_path: Path) -> int:
         doc.close()
 
 
+def _pdfium_extract_page_text(doc: Any, page_index: int) -> str:
+    page = doc[page_index]
+    try:
+        textpage = page.get_textpage()
+        try:
+            char_count = textpage.count_chars()
+            if char_count <= 0:
+                return ""
+            return textpage.get_text_range(0, char_count)
+        finally:
+            textpage.close()
+    finally:
+        page.close()
+
+
+def _sec_toc_listing_score(page_text: str) -> int:
+    text = page_text.lower()
+    score = 0
+    if "table of contents" in text:
+        score += 2
+
+    if re.search(r"(?im)^\s*index\s*$", page_text):
+        score += 2
+
+    # SEC filings often (unhelpfully) include a "Table of Contents" header on every page after conversion.
+    # To reduce false positives, prefer ToC *listing* pages that have multiple Item/Part lines ending in
+    # page numbers (e.g. "ITEM 7A. ... 55").
+    tocish_lines = re.findall(r"(?im)^\s*(part\s+[ivx]+\b.*\s\d+\s*$|item\s+\d+[a-z]?\b.*\s\d+\s*$)", page_text)
+    tocish_count = len(tocish_lines)
+    if tocish_count >= 8:
+        score += 4
+    elif tocish_count >= 4:
+        score += 3
+    elif tocish_count >= 2:
+        score += 1
+
+    if re.search(r"(?i)\bpart\s+i\b", page_text) or "financial information" in text:
+        score += 1
+
+    if re.search(r"(?i)\bpage\b", page_text):
+        score += 1
+
+    return score
+
+
+def _sec_signatures_score(page_text: str) -> int:
+    text = page_text.lower()
+    score = 0
+    if re.search(r"(?im)^\s*signatures?\s*$", page_text):
+        score += 3
+    elif "signatures" in text or "signature" in text:
+        score += 1
+
+    if "pursuant to the requirements" in text:
+        score += 1
+    if "registrant has duly caused" in text or "duly caused this report to be signed" in text:
+        score += 1
+    if "thereunto duly authorized" in text:
+        score += 1
+    if "/s/" in text:
+        score += 2
+    if "chief executive officer" in text or "chief financial officer" in text:
+        score += 1
+    return score
+
+
+def _sec_exhibits_score(page_text: str) -> int:
+    text = page_text.lower()
+    score = 0
+    if re.search(r"(?i)\bitem\s+6\.?\s*exhibits?\b", page_text):
+        score += 2
+    if "exhibit index" in text:
+        score += 2
+    if "the exhibits listed below are filed as part of" in text:
+        score += 3
+    if "exhibit number" in text and "exhibit title" in text:
+        score += 1
+
+    # Many filings include a compact exhibits list without the long "exhibits listed below" caption.
+    # Heuristic: detect multiple exhibit numbers like 31.1 / 32.1 / 101.INS / 104.
+    exhibit_id_hits = re.findall(r"(?im)^\s*\*?\s*(\d{1,3}\.\d{1,2}|\d{1,3}\.[A-Z]{2,4}|\d{1,3})\b", page_text)
+    if len(exhibit_id_hits) >= 8:
+        score += 3
+    elif len(exhibit_id_hits) >= 4:
+        score += 2
+    elif len(exhibit_id_hits) >= 2:
+        score += 1
+    return score
+
+
+def infer_sec_page_window(
+    pdf_path: Path,
+    *,
+    max_front_scan_pages: int = 15,
+    max_back_scan_pages: int = 25,
+) -> tuple[int | None, int | None, dict[str, Any]]:
+    """
+    Infer a [start, end) window of pages to keep for SEC 10-K/10-Q style PDFs.
+
+    - start: first "real" Table of Contents listing page (drops cover/boilerplate before it)
+    - end: first Exhibits/Signatures page near the end (drops exhibits/signatures and anything after)
+    """
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(str(pdf_path))
+    try:
+        page_count = len(doc)
+        front_scan = min(max_front_scan_pages, page_count)
+        back_scan = min(max_back_scan_pages, page_count)
+
+        toc_page: int | None = None
+        toc_score: int = 0
+        for i in range(front_scan):
+            text = _pdfium_extract_page_text(doc, i)
+            score = _sec_toc_listing_score(text)
+            if score > toc_score:
+                toc_score = score
+                toc_page = i
+            if score >= 5:
+                toc_page = i
+                break
+
+        # Only trust the ToC heuristic when it clears a minimum score; otherwise treat as unknown.
+        if toc_page is not None and toc_score < 4:
+            toc_page = None
+
+        exhibits_page: int | None = None
+        exhibits_score: int = 0
+        signatures_page: int | None = None
+        signatures_score: int = 0
+        start_back = max(0, page_count - back_scan)
+        for i in range(start_back, page_count):
+            text = _pdfium_extract_page_text(doc, i)
+
+            e_score = _sec_exhibits_score(text)
+            if e_score > exhibits_score:
+                exhibits_score = e_score
+                exhibits_page = i
+
+            s_score = _sec_signatures_score(text)
+            if s_score > signatures_score:
+                signatures_score = s_score
+                signatures_page = i
+
+        if exhibits_page is not None and exhibits_score < 2:
+            exhibits_page = None
+        if signatures_page is not None and signatures_score < 3:
+            signatures_page = None
+
+        cutoff_page: int | None = None
+        if exhibits_page is not None and signatures_page is not None:
+            cutoff_page = min(exhibits_page, signatures_page)
+        else:
+            cutoff_page = exhibits_page if exhibits_page is not None else signatures_page
+
+        info: dict[str, Any] = {
+            "page_count": page_count,
+            "toc_page": toc_page,
+            "toc_score": toc_score,
+            "exhibits_page": exhibits_page,
+            "exhibits_score": exhibits_score,
+            "signatures_page": signatures_page,
+            "signatures_score": signatures_score,
+            "cutoff_page": cutoff_page,
+            "max_front_scan_pages": front_scan,
+            "max_back_scan_pages": back_scan,
+        }
+        return toc_page, cutoff_page, info
+    finally:
+        doc.close()
+
+
 def process_one(
     html_file_path: Path, html_dir: Path, pdf_root: Path, md_root: Path, debug_root: Path, args_dict: dict
 ) -> None:
@@ -632,19 +806,53 @@ def process_one(
     # 1. convert HTML to PDF
     source_url = f"file://{html_file_path.absolute()}"
     weasyprint.HTML(source_url).write_pdf(str(pdf_path), stylesheets=[CSS_STYLESHEET])
-    logger.success(f"Wrote intermediate PDF to {pdf_path}")
+
+    toc_artifact_info: dict[str, Any] | None = None
+    if bool(args_dict.get("strip_repeated_toc", True)):
+        has_artifact, artifact_info = detect_repeated_toc_header_artifact(pdf_path)
+        toc_artifact_info = {"detected": has_artifact, **artifact_info}
+        if has_artifact:
+            html_raw = html_file_path.read_text(errors="ignore")
+            cleaned_html, removed = strip_table_of_contents_links_from_html(html_raw)
+            toc_artifact_info["removed_toc_link_anchors"] = removed
+            if bool(args_dict.get("save_cleaned_html", False)):
+                cleaned_html_path = debug_dir / "cleaned_for_pdf.html"
+                with open(cleaned_html_path, "w") as f:
+                    f.write(cleaned_html)
+
+            weasyprint.HTML(string=cleaned_html, base_url=str(html_file_path.parent)).write_pdf(
+                str(pdf_path), stylesheets=[CSS_STYLESHEET]
+            )
+            has_artifact_after, artifact_info_after = detect_repeated_toc_header_artifact(pdf_path)
+            toc_artifact_info["after"] = {"detected": has_artifact_after, **artifact_info_after}
+            logger.info(
+                f"{rel_path}: removed repeated ToC links (removed={removed}) detected_before={has_artifact} detected_after={has_artifact_after}"
+            )
+    logger.success(f"Wrote intermediate PDF to {pdf_path}, time taken: {time.perf_counter() - t_start:.2f}s")
 
     # 2. convert PDF to document (so we can save multiple renderings/artifacts)
     # each 10Q usually requires ~40 LLM calls for LLMTableProcessor
     drop_front_pages = int(args_dict.get("drop_front_pages") or 0)
     drop_back_pages = int(args_dict.get("drop_back_pages") or 0)
-    if drop_front_pages < 0 or drop_back_pages < 0:
-        raise ValueError("--drop-front-pages and --drop-back-pages must be >= 0")
+    if drop_front_pages < -1 or drop_back_pages < -1:
+        raise ValueError("--drop-front-pages and --drop-back-pages must be >= 0 (or -1 for SEC auto-detect)")
+
+    sec_auto_drop_info: dict[str, Any] | None = None
+    if drop_front_pages == -1 or drop_back_pages == -1:
+        auto_start, auto_end, sec_auto_drop_info = infer_sec_page_window(pdf_path)
+        logger.info(
+            f"{rel_path}: SEC auto-drop inferred start={auto_start} end={auto_end} info={sec_auto_drop_info}"
+        )
+        if drop_front_pages == -1:
+            drop_front_pages = int(auto_start or 0)
+        if drop_back_pages == -1:
+            page_count = int(sec_auto_drop_info.get("page_count") or get_pdf_page_count(pdf_path))
+            drop_back_pages = int(page_count - auto_end) if auto_end is not None else 0
 
     if drop_front_pages or drop_back_pages:
         page_count = get_pdf_page_count(pdf_path)
-        start = min(drop_front_pages, page_count)
-        end = max(start, page_count - drop_back_pages)
+        start = min(max(drop_front_pages, 0), page_count)
+        end = max(start, page_count - max(drop_back_pages, 0))
         page_range = list(range(start, end))
         if not page_range:
             logger.warning(
@@ -679,6 +887,7 @@ def process_one(
                 "args": args_dict,
                 "config": renderer_config,
                 "page_range": converter_config.get("page_range"),
+                "sec_auto_drop": sec_auto_drop_info,
                 "llm_error_count": llm_err_total,
                 "page_count": page_cnt,
                 "llm_error_ratio": llm_err_total / page_cnt if page_cnt > 0 else None,
