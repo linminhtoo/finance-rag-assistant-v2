@@ -34,7 +34,7 @@ class Args:
     storage_path: str
     collection_name: str
     llm_provider: str | None
-    fastembed_model: str
+    embedding_model: str
     cache_dir: str | None
     bm25_path: str | None
     max_docs: int | None
@@ -59,12 +59,15 @@ def parse_args() -> Args:
     parser.add_argument(
         "--llm-provider",
         default=None,
-        help="Embedding provider (defaults to env LLM_PROVIDER). Use 'fastembed' for local embeddings.",
+        help=(
+            "Embedding provider (defaults to env LLM_PROVIDER). "
+            "Choices are: 'openai', 'mistral', 'fastembed'. "
+        ),
     )
     parser.add_argument(
-        "--fastembed-model",
+        "--embedding-model",
         default="BAAI/bge-small-en-v1.5",
-        help="FastEmbed model name when --llm-provider fastembed.",
+        help="Name of embedding model. Used by all llm providers.",
     )
     parser.add_argument(
         "--cache-dir", default=None, help="Directory to use for model caches/temp files (keeps writes inside the repo)."
@@ -91,7 +94,7 @@ def parse_args() -> Args:
         storage_path=storage_path,
         collection_name=args.collection_name,
         llm_provider=args.llm_provider,
-        fastembed_model=args.fastembed_model,
+        embedding_model=args.embedding_model,
         cache_dir=args.cache_dir,
         bm25_path=args.bm25_path,
         max_docs=args.max_docs,
@@ -177,7 +180,7 @@ def main() -> int:
 
     llm_kwargs: dict[str, Any] = {}
     if (args.llm_provider or "").strip().lower() in {"fastembed", "local"}:
-        llm_kwargs["embed_model"] = args.fastembed_model
+        llm_kwargs["embed_model"] = args.embedding_model
     llm = get_llm_client(provider=args.llm_provider, **llm_kwargs)
 
     retriever = HybridRetriever(
@@ -224,6 +227,11 @@ def main() -> int:
             for batch in _batched(doc_chunks, batch_size=args.batch_size):
                 # NOTE: avoid repeatedly rebuilding BM25 until all docs are indexed
                 # TODO: look into alternative sparse retrieval indices like OpenSearch
+                # Milvus ???
+                # In this tutorial, we will demonstrate how to conduct hybrid search with Milvus and BGE-M3 model.
+                # BGE-M3 model can convert text into dense and sparse vectors. 
+                # Milvus supports storing both types of vectors in one collection, allowing for hybrid search 
+                # that enhances the result relevance.
                 retriever.index(batch, rebuild_bm25=False)
 
             total_docs += 1
