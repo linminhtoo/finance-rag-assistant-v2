@@ -10,7 +10,7 @@ import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Annotated, List
+from typing import Annotated, Any, List, cast
 
 import openai
 import PIL
@@ -28,6 +28,7 @@ from marker.renderers.markdown import MarkdownOutput, MarkdownRenderer
 from marker.schema.blocks import Block
 from marker.services.openai import OpenAIService as BaseOpenAIService
 from openai import APITimeoutError, RateLimitError
+from PIL import ImageStat
 from pydantic import BaseModel
 from tqdm import tqdm
 
@@ -45,6 +46,14 @@ class CustomOpenAIService(BaseOpenAIService):
     openai_system_prompt: Annotated[str, "Optional system prompt to prepend before the user message."] = ""
     openai_timeout: Annotated[int, "Request timeout in seconds."] = 240
     openai_max_retries: Annotated[int, "Max retries for transient errors (rate limit/timeout)."] = 1
+    schema_routes: Annotated[
+        dict[str, dict],
+        "Optional per-schema overrides keyed by `<module>.<SchemaName>` (e.g. "
+        "`marker.processors.llm.llm_sectionheader.SectionHeaderSchema`). Supported keys include: "
+        "`openai_base_url`, `openai_model`, `openai_timeout`, `openai_max_retries`, `openai_temperature`, "
+        "`max_prompt_tokens`, `hf_model_id`, `hf_revision`, `max_image_long_side`, `skip_blank_images`, "
+        "`blank_image_variance_threshold`.",
+    ] = {}
     hf_model_id: Annotated[
         str,
         "Optional HuggingFace model/tokenizer id used to estimate prompt token counts before sending the request. "
@@ -59,14 +68,72 @@ class CustomOpenAIService(BaseOpenAIService):
     max_prompt_tokens: Annotated[
         int, "If > 0, skip the LLM call when the estimated prompt tokens exceed this value (best-effort)."
     ] = 0
+    max_image_long_side: Annotated[int, "If >0, downscale images so max(width,height) <= this before sending."] = 0
+    skip_blank_images: Annotated[bool, "If true, skip LLM calls when all images look blank/uniform."] = False
+    blank_image_variance_threshold: Annotated[
+        float, "Grayscale variance threshold used to treat an image as blank (lower = stricter)."
+    ] = 0.25
 
-    def get_client(self) -> openai.OpenAI:
+    def get_client(self, *, base_url: str | None = None, timeout: int | None = None) -> openai.OpenAI:
+        base_url = (base_url or self.openai_base_url).strip()
+        timeout = timeout if timeout is not None else self.openai_timeout
         # OpenAI Python SDK defaults to `max_retries=2` (3 total attempts), which can make a single
         # LangSmith-traced request appear to run up to ~3x longer than `timeout`. We implement our
         # own retry loop below, so disable SDK retries for predictable timing.
         return openai.OpenAI(
-            api_key=self.openai_api_key, base_url=self.openai_base_url, max_retries=0, timeout=self.openai_timeout
+            api_key=self.openai_api_key, base_url=base_url, max_retries=0, timeout=timeout
         )
+
+    @staticmethod
+    def _schema_key(response_schema: type[BaseModel]) -> str:
+        return f"{response_schema.__module__}.{response_schema.__name__}"
+
+    def _route_for_schema(self, response_schema: type[BaseModel]) -> dict:
+        schema_key = self._schema_key(response_schema)
+        routes = self.schema_routes or {}
+        return routes.get(schema_key, {})
+
+    @staticmethod
+    def _downscale_image(image: PIL.Image.Image, max_long_side: int) -> PIL.Image.Image:  # type: ignore[type-arg]
+        if max_long_side <= 0:
+            return image
+        width, height = image.size
+        if max(width, height) <= max_long_side:
+            return image
+        img_copy = image.copy()
+        img_copy.thumbnail((max_long_side, max_long_side))
+        return img_copy
+
+    @staticmethod
+    def _looks_blank(image: PIL.Image.Image, variance_threshold: float) -> bool:  # type: ignore[type-arg]
+        try:
+            stat = ImageStat.Stat(image.convert("L"))
+            var = float(stat.var[0]) if stat.var else 0.0
+            return var <= variance_threshold
+        except Exception:  # noqa: BLE001 - best effort
+            return False
+
+    def _prepare_images(
+        self,
+        image: PIL.Image.Image | List[PIL.Image.Image] | None,  # type: ignore[type-arg]
+        *,
+        max_long_side: int,
+        skip_blank_images: bool,
+        blank_variance_threshold: float,
+    ) -> PIL.Image.Image | List[PIL.Image.Image] | None:  # type: ignore[type-arg]
+        if not image:
+            return None
+
+        images: list[PIL.Image.Image] = image if isinstance(image, list) else [image]  # type: ignore[type-arg]
+        processed = [self._downscale_image(img, max_long_side) for img in images]
+
+        if skip_blank_images and processed:
+            if all(self._looks_blank(img, blank_variance_threshold) for img in processed):
+                return None
+
+        if isinstance(image, list):
+            return processed
+        return processed[0]
 
     def __call__(
         self,
