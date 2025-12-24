@@ -59,10 +59,7 @@ def parse_args() -> Args:
     parser.add_argument(
         "--llm-provider",
         default=None,
-        help=(
-            "Embedding provider (defaults to env LLM_PROVIDER). "
-            "Choices are: 'openai', 'mistral', 'fastembed'. "
-        ),
+        help=("Embedding provider (defaults to env LLM_PROVIDER). Choices are: 'openai', 'mistral', 'fastembed'. "),
     )
     parser.add_argument(
         "--embedding-model",
@@ -229,8 +226,8 @@ def main() -> int:
                 # TODO: look into alternative sparse retrieval indices like OpenSearch
                 # Milvus ???
                 # In this tutorial, we will demonstrate how to conduct hybrid search with Milvus and BGE-M3 model.
-                # BGE-M3 model can convert text into dense and sparse vectors. 
-                # Milvus supports storing both types of vectors in one collection, allowing for hybrid search 
+                # BGE-M3 model can convert text into dense and sparse vectors.
+                # Milvus supports storing both types of vectors in one collection, allowing for hybrid search
                 # that enhances the result relevance.
                 retriever.index(batch, rebuild_bm25=False)
 

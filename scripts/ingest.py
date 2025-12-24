@@ -298,7 +298,7 @@ def main() -> int:
             if out_path.exists() and not args.overwrite:
                 logger.info(f"Skipping (exists): {out_path}")
                 continue
-            
+
             doc_start_time = time.time()
             doc_id = _make_doc_id(md_path, markdown_root=markdown_root, strategy=args.doc_id_strategy)
             try:
@@ -320,9 +320,7 @@ def main() -> int:
 
                 processed += 1
                 total_chunks += len(chunks)
-                logger.success(
-                    f"Chunked {md_path} -> {out_path} | chunks={len(chunks)} | time_s={rec['chunk_time_s']}"
-                )
+                logger.success(f"Chunked {md_path} -> {out_path} | chunks={len(chunks)} | time_s={rec['chunk_time_s']}")
 
             except Exception as e:  # noqa: BLE001 - best-effort batch processing
                 logger.exception(f"Failed to chunk {md_path}: {e}")

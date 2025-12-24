@@ -80,9 +80,7 @@ class CustomOpenAIService(BaseOpenAIService):
         # OpenAI Python SDK defaults to `max_retries=2` (3 total attempts), which can make a single
         # LangSmith-traced request appear to run up to ~3x longer than `timeout`. We implement our
         # own retry loop below, so disable SDK retries for predictable timing.
-        return openai.OpenAI(
-            api_key=self.openai_api_key, base_url=base_url, max_retries=0, timeout=timeout
-        )
+        return openai.OpenAI(api_key=self.openai_api_key, base_url=base_url, max_retries=0, timeout=timeout)
 
     @staticmethod
     def _schema_key(response_schema: type[BaseModel]) -> str:
