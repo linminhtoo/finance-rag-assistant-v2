@@ -354,6 +354,7 @@ class Args:
     hf_count_image_tokens: bool
     log_prompt_token_count: bool
     max_prompt_tokens: int
+    max_image_long_side: int
     timeout: int
     max_retries: int
     max_concurrency: int
@@ -413,6 +414,12 @@ def parse_args() -> Args:
         type=int,
         default=0,
         help="If >0, skip LLM calls whose estimated prompt exceeds this many tokens (best-effort).",
+    )
+    parser.add_argument(
+        "--max-image-long-side",
+        type=int,
+        default=0,
+        help="If >0, downscale images so max(width,height) <= this before sending to LLM.",
     )
     parser.add_argument("--timeout", type=int, default=30, help="Request timeout in seconds.")
     parser.add_argument(
@@ -511,6 +518,7 @@ def parse_args() -> Args:
         hf_count_image_tokens=not args.no_hf_count_image_tokens,
         log_prompt_token_count=args.log_prompt_token_count,
         max_prompt_tokens=args.max_prompt_tokens,
+        max_image_long_side=args.max_image_long_side,
         timeout=args.timeout,
         max_retries=args.max_retries,
         max_concurrency=args.max_concurrency,
@@ -781,6 +789,7 @@ def main():
         "CustomOpenAIService_openai_system_prompt": args.openai_system_prompt,
         "CustomOpenAIService_openai_timeout": args.timeout,
         "CustomOpenAIService_openai_max_retries": args.max_retries,
+        "CustomOpenAIService_max_image_long_side": args.max_image_long_side,
         "CustomOpenAIService_schema_routes": schema_routes,
         "CustomOpenAIService_hf_model_id": args.hf_model_id,
         "CustomOpenAIService_hf_trust_remote_code": args.hf_trust_remote_code,
