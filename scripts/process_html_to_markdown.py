@@ -147,13 +147,37 @@ class CustomOpenAIService(BaseOpenAIService):
         request_id = uuid.uuid4().hex
         start_time = time.perf_counter()
 
-        max_retries = self.openai_max_retries
-        timeout = self.openai_timeout
-        logger.info(
-            f"CustomOpenAIService[{request_id}] start timeout={timeout}s max_retries={max_retries} model={self.openai_model}"
+        had_image = bool(image)
+        route = self._route_for_schema(response_schema)
+        model = (route.get("openai_model") or self.openai_model).strip()
+        base_url = (route.get("openai_base_url") or self.openai_base_url).strip()
+        temperature = float(route.get("openai_temperature", self.openai_temperature))
+        max_retries = int(route.get("openai_max_retries", self.openai_max_retries))
+        timeout = int(route.get("openai_timeout", self.openai_timeout))
+        max_prompt_tokens = int(route.get("max_prompt_tokens", self.max_prompt_tokens))
+        hf_model_id_override = (route.get("hf_model_id") or "").strip()
+        hf_revision_override = (route.get("hf_revision") or "").strip()
+        max_image_long_side = int(route.get("max_image_long_side", self.max_image_long_side))
+        skip_blank_images = bool(route.get("skip_blank_images", self.skip_blank_images))
+        blank_variance_threshold = float(
+            route.get("blank_image_variance_threshold", self.blank_image_variance_threshold)
         )
 
-        client = wrap_openai(self.get_client())
+        logger.info(
+            f"CustomOpenAIService[{request_id}] start timeout={timeout}s max_retries={max_retries} model={model} schema={self._schema_key(response_schema)}"
+        )
+
+        image = self._prepare_images(
+            image,
+            max_long_side=max_image_long_side,
+            skip_blank_images=skip_blank_images,
+            blank_variance_threshold=blank_variance_threshold,
+        )
+        if skip_blank_images and had_image and image is None:
+            marker_logger.warning("CustomOpenAIService[%s] blank_image_detected; skipping LLM call", request_id)
+            return {}
+
+        client = wrap_openai(self.get_client(base_url=base_url, timeout=timeout))
         image_data = self.format_image_for_llm(image)
 
         messages = []
@@ -161,12 +185,12 @@ class CustomOpenAIService(BaseOpenAIService):
             messages.append({"role": "system", "content": [{"type": "text", "text": self.openai_system_prompt}]})
         messages.append({"role": "user", "content": [*image_data, {"type": "text", "text": prompt}]})
 
-        if self.log_prompt_token_count or self.max_prompt_tokens > 0:
+        if self.log_prompt_token_count or max_prompt_tokens > 0:
             try:
                 from finrag.hf_token_count import count_tokens_openai_messages
 
-                hf_model_id = (self.hf_model_id or self.openai_model).strip()
-                revision = (self.hf_revision or "").strip() or None
+                hf_model_id = (hf_model_id_override or self.hf_model_id or model).strip()
+                revision = (hf_revision_override or self.hf_revision or "").strip() or None
                 token_info = count_tokens_openai_messages(
                     messages,
                     hf_model_id,
@@ -186,12 +210,12 @@ class CustomOpenAIService(BaseOpenAIService):
                 )
                 # TODO: we can't do block.update_metadata bcos BlockMetadata doesn't have these new fields
                 # we will need to somehow override BlockMetadata to add these fields
-                if self.max_prompt_tokens > 0 and token_info.total_tokens > self.max_prompt_tokens:
+                if max_prompt_tokens > 0 and token_info.total_tokens > max_prompt_tokens:
                     marker_logger.warning(
                         "CustomOpenAIService[%s] prompt_too_long total=%s max=%s; skipping LLM call",
                         request_id,
                         token_info.total_tokens,
-                        self.max_prompt_tokens,
+                        max_prompt_tokens,
                     )
                     return {}
             except Exception as exc:  # noqa: BLE001 - best effort
@@ -205,11 +229,11 @@ class CustomOpenAIService(BaseOpenAIService):
                 # however, based on testing, vLLM does cancel requests immediately once python process is killed
                 # (not just ctrl+C but kill -9)
                 response = client.chat.completions.parse(
-                    model=self.openai_model,
+                    model=model,
                     messages=messages,
                     timeout=timeout,
                     response_format=response_schema,
-                    temperature=self.openai_temperature,
+                    temperature=temperature,
                 )
                 response_text = response.choices[0].message.content
                 if response_text is None:
@@ -316,6 +340,10 @@ class Args:
     output_dir: str
     openai_base_url: str
     openai_model: str
+    sectionheader_openai_base_url: str
+    sectionheader_openai_model: str
+    sectionheader_timeout: int
+    sectionheader_max_prompt_tokens: int
     openai_system_prompt: str
     openai_temperature: float
     hf_model_id: str
@@ -345,6 +373,28 @@ def parse_args() -> Args:
         "--openai-base-url", required=True, help="Base URL for OpenAI-compatible API (no trailing slash)."
     )
     parser.add_argument("--openai-model", required=True, help="Model name for OpenAI-compatible API.")
+    parser.add_argument(
+        "--sectionheader-openai-base-url",
+        default="",
+        help="Optional base URL override for `LLMSectionHeaderProcessor` (text-only) requests.",
+    )
+    parser.add_argument(
+        "--sectionheader-openai-model",
+        default="",
+        help="Optional model override for `LLMSectionHeaderProcessor` (text-only) requests.",
+    )
+    parser.add_argument(
+        "--sectionheader-timeout",
+        type=int,
+        default=0,
+        help="Optional timeout override (seconds) for `LLMSectionHeaderProcessor` requests.",
+    )
+    parser.add_argument(
+        "--sectionheader-max-prompt-tokens",
+        type=int,
+        default=0,
+        help="If >0, skip `LLMSectionHeaderProcessor` requests whose estimated prompt exceeds this many tokens.",
+    )
     parser.add_argument("--openai-system-prompt", default="", help="Optional system prompt for the LLM.")
     parser.add_argument("--openai-temperature", type=float, default=0.7, help="Sampling temperature.")
     parser.add_argument(
@@ -398,6 +448,10 @@ def parse_args() -> Args:
         output_dir=args.output_dir,
         openai_base_url=args.openai_base_url,
         openai_model=args.openai_model,
+        sectionheader_openai_base_url=args.sectionheader_openai_base_url,
+        sectionheader_openai_model=args.sectionheader_openai_model,
+        sectionheader_timeout=args.sectionheader_timeout,
+        sectionheader_max_prompt_tokens=args.sectionheader_max_prompt_tokens,
         openai_system_prompt=args.openai_system_prompt,
         openai_temperature=args.openai_temperature,
         hf_model_id=args.hf_model_id,
@@ -484,6 +538,10 @@ def process_one(
     # time.sleep(random.uniform(10, 30))
 
     worker_converter, worker_markdown_renderer, renderer_config = get_worker_pipeline()
+    converter_config = worker_converter.config
+    if converter_config is None or not isinstance(converter_config, dict):
+        raise RuntimeError("Expected PdfConverter.config to be a dict in this script")
+    converter_config = cast(dict[str, Any], converter_config)
 
     rel_path = html_file_path.relative_to(html_dir)
     pdf_path = (pdf_root / rel_path).with_suffix(".pdf")
