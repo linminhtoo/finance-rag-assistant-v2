@@ -3,6 +3,7 @@ data/**/*.pdf
 data/**/*.json
 data/**/*.md
 debug_outputs/
+data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -2,6 +2,7 @@ import os
 from typing import Literal, Protocol, TypedDict, cast, runtime_checkable
 
 import numpy as np
+from langsmith.wrappers import wrap_openai
 from mistralai import Mistral
 from mistralai.models.chatcompletionrequest import MessagesTypedDict
 from openai import OpenAI
@@ -59,6 +60,7 @@ class OpenAIClientWrapper:
         base_url_env: str = "OPENAI_BASE_URL",
         organization_env: str = "OPENAI_ORGANIZATION",
         project_env: str = "OPENAI_PROJECT",
+        langsmith_trace: bool = False,
     ):
         api_key = os.getenv(api_key_env)
         if not api_key:
@@ -69,6 +71,8 @@ class OpenAIClientWrapper:
         project = os.getenv(project_env) or None
 
         self.client = OpenAI(api_key=api_key, base_url=base_url, organization=organization, project=project)
+        if langsmith_trace:
+            self.client = wrap_openai(self.client)
         self.chat_model = chat_model
         self.embed_model = embed_model
 
@@ -112,12 +116,19 @@ class FastEmbedClientWrapper:
         raise RuntimeError("FastEmbedClientWrapper does not support chat()")
 
 
-def get_llm_client(provider: str | None = None, **kwargs) -> LLMClient:
+def get_llm_client(
+    provider: str | None = None,
+    langsmith_trace: bool = False,
+    **kwargs
+) -> LLMClient:
     name = (provider or os.getenv("LLM_PROVIDER") or "mistral").strip().lower()
+    if langsmith_trace and name  != "openai":
+        raise ValueError("Langsmith tracing is only supported for OpenAI provider")
+    
     if name == "mistral":
         return MistralClientWrapper(**kwargs)
-    if name in {"openai", "gpt"}:
-        return OpenAIClientWrapper(**kwargs)
-    if name in {"fastembed", "local"}:
+    if name  == "openai":
+        return OpenAIClientWrapper(langsmith_trace=langsmith_trace, **kwargs)
+    if name == "fastembed":
         return FastEmbedClientWrapper(**kwargs)
     raise ValueError(f"Unsupported LLM provider: {provider}")
