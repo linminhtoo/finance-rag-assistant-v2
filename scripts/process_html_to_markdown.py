@@ -358,6 +358,9 @@ class Args:
     workers: int
     gpu_ids: str
     year_cutoff: int | None
+    disable_forms: bool
+    drop_front_pages: int
+    drop_back_pages: int
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -442,6 +445,23 @@ def parse_args() -> Args:
     parser.add_argument(
         "--gpu-ids", default="", help="Optional comma-separated GPU ids to round-robin across workers (e.g., '0,1')."
     )
+    parser.add_argument(
+        "--disable-forms",
+        action="store_true",
+        help="Disable `marker.processors.llm.llm_form.LLMFormProcessor` (skip all form LLM calls).",
+    )
+    parser.add_argument(
+        "--drop-front-pages",
+        type=int,
+        default=0,
+        help="Skip the first N pages of each PDF for Marker processing (0 = keep all).",
+    )
+    parser.add_argument(
+        "--drop-back-pages",
+        type=int,
+        default=0,
+        help="Skip the last N pages of each PDF for Marker processing (0 = keep all).",
+    )
     args = parser.parse_args()
     return Args(
         html_dir=args.html_dir,
@@ -466,6 +486,9 @@ def parse_args() -> Args:
         workers=args.workers,
         gpu_ids=args.gpu_ids,
         year_cutoff=args.year_cutoff,
+        disable_forms=args.disable_forms,
+        drop_front_pages=args.drop_front_pages,
+        drop_back_pages=args.drop_back_pages,
     )
 
 
@@ -531,6 +554,16 @@ def get_worker_pipeline() -> tuple[PdfConverter, MarkdownRenderer, dict]:
     return _worker_converter, _worker_markdown_renderer, _worker_renderer_config
 
 
+def get_pdf_page_count(pdf_path: Path) -> int:
+    import pypdfium2 as pdfium
+
+    doc = pdfium.PdfDocument(str(pdf_path))
+    try:
+        return len(doc)
+    finally:
+        doc.close()
+
+
 def process_one(
     html_file_path: Path, html_dir: Path, pdf_root: Path, md_root: Path, debug_root: Path, args_dict: dict
 ) -> None:
@@ -567,6 +600,25 @@ def process_one(
 
     # 2. convert PDF to document (so we can save multiple renderings/artifacts)
     # each 10Q usually requires ~40 LLM calls for LLMTableProcessor
+    drop_front_pages = int(args_dict.get("drop_front_pages") or 0)
+    drop_back_pages = int(args_dict.get("drop_back_pages") or 0)
+    if drop_front_pages < 0 or drop_back_pages < 0:
+        raise ValueError("--drop-front-pages and --drop-back-pages must be >= 0")
+
+    if drop_front_pages or drop_back_pages:
+        page_count = get_pdf_page_count(pdf_path)
+        start = min(drop_front_pages, page_count)
+        end = max(start, page_count - drop_back_pages)
+        page_range = list(range(start, end))
+        if not page_range:
+            logger.warning(
+                f"Skipping {rel_path}: after dropping front/back pages ({drop_front_pages}/{drop_back_pages}), no pages remain (page_count={page_count})"
+            )
+            return
+        converter_config["page_range"] = page_range
+    else:
+        converter_config.pop("page_range", None)
+
     document = worker_converter.build_document(str(pdf_path))
     logger.success(f"Converted PDF to Marker document for {rel_path}")
 
@@ -599,6 +651,7 @@ def process_one(
                 "output_markdown": str(md_path),
                 "args": args_dict,
                 "config": renderer_config,
+                "page_range": converter_config.get("page_range"),
                 "llm_error_count": llm_err_total,
                 "page_count": page_cnt,
                 "llm_error_ratio": llm_err_total / page_cnt if page_cnt > 0 else None,
@@ -670,6 +723,33 @@ def main():
     if args.workers < 1:
         raise RuntimeError("--workers must be >= 1")
 
+    schema_routes: dict[str, dict] = {}
+    # TODO: conditional needs to be improved. need to ensure both URL and model are set
+    if args.sectionheader_openai_base_url or args.sectionheader_openai_model or args.sectionheader_timeout:
+        schema_key = "marker.processors.llm.llm_sectionheader.SectionHeaderSchema"
+        schema_routes[schema_key] = {}
+        if args.sectionheader_openai_base_url:
+            schema_routes[schema_key]["openai_base_url"] = args.sectionheader_openai_base_url
+        if args.sectionheader_openai_model:
+            schema_routes[schema_key]["openai_model"] = args.sectionheader_openai_model
+        if args.sectionheader_timeout and args.sectionheader_timeout > 0:
+            schema_routes[schema_key]["openai_timeout"] = args.sectionheader_timeout
+    if args.sectionheader_max_prompt_tokens and args.sectionheader_max_prompt_tokens > 0:
+        schema_key = "marker.processors.llm.llm_sectionheader.SectionHeaderSchema"
+        schema_routes.setdefault(schema_key, {})
+        schema_routes[schema_key]["max_prompt_tokens"] = args.sectionheader_max_prompt_tokens
+
+    processors_override: str | None = None
+    if args.disable_forms:
+        from marker.converters.pdf import PdfConverter as _PdfConverter
+        from marker.processors import BaseProcessor
+        from marker.util import classes_to_strings
+
+        disabled = {"marker.processors.llm.llm_form.LLMFormProcessor"}
+        default_processors = cast(list[type[BaseProcessor]], list(_PdfConverter.default_processors))
+        filtered_processors = [p for p in default_processors if f"{p.__module__}.{p.__name__}" not in disabled]
+        processors_override = ",".join(classes_to_strings(filtered_processors))
+
     config = {
         "output_format": "markdown",
         "use_llm": True,
@@ -681,6 +761,7 @@ def main():
         "CustomOpenAIService_openai_system_prompt": args.openai_system_prompt,
         "CustomOpenAIService_openai_timeout": args.timeout,
         "CustomOpenAIService_openai_max_retries": args.max_retries,
+        "CustomOpenAIService_schema_routes": schema_routes,
         "CustomOpenAIService_hf_model_id": args.hf_model_id,
         "CustomOpenAIService_hf_revision": args.hf_revision,
         "CustomOpenAIService_hf_trust_remote_code": args.hf_trust_remote_code,
@@ -694,6 +775,8 @@ def main():
         "disable_image_extraction": True,
         "force_ocr": False,
     }
+    if processors_override:
+        config["processors"] = processors_override
 
     if args.workers == 1:
         gpu_ids = [gpu.strip() for gpu in args.gpu_ids.split(",") if gpu.strip()]
