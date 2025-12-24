@@ -82,5 +82,5 @@ Notes:
 
 To estimate prompt size with a HuggingFace tokenizer/processor, enable:
 - `--log-prompt-token-count` to log best-effort token counts per request
-- `--hf-model-id <hf-id>` to override which HF tokenizer/processor is used (defaults to `--openai-model`)
+- `--token-count-hf-model-id <hf-id>` to override which HF tokenizer/processor is used for prompt token counting (defaults to `--openai-model`; `--hf-model-id` still accepted)
 - `--max-prompt-tokens N` to skip calls that exceed `N` tokens (best-effort)
