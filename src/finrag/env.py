@@ -29,4 +29,3 @@ def load_project_dotenv(*, override: bool = False) -> bool:
 
     _DOTENV_LOADED = True
     return True
-

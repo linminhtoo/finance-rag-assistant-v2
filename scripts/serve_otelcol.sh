@@ -1,4 +1,7 @@
 #!/bin/bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
 # https://opentelemetry.io/docs/collector/install/binary/linux/#manual-linux-installation
 # curl --proto '=https' --tlsv1.2 -fOL https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.141.0/otelcol_0.141.0_linux_amd64.tar.gz
@@ -6,7 +9,7 @@
 
 now=$(date +"%Y%m%d_%H%M%S")
 ./otelcol --config ./otelcol-config.yaml \
-    2>&1 | tee ../logs/otelcol_ingest_html_to_markdown.$now.log
+	    2>&1 | tee ../logs/otelcol_ingest_html_to_markdown.$now.log
 
 # now=$(date +"%Y%m%d_%H%M%S")
 # ./otelcol --config ./otelcol-config.yaml \

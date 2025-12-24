@@ -22,4 +22,3 @@ if [[ -f "$env_file" ]]; then
 else
   echo "Warning: .env not found at: $env_file (copy .env.example -> .env)" >&2
 fi
-

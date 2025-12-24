@@ -181,6 +181,9 @@ def main() -> int:
     llm_kwargs: dict[str, Any] = {}
     if (args.llm_provider or "").strip().lower() in {"fastembed", "local"}:
         llm_kwargs["embed_model"] = args.embedding_model
+
+    if os.environ.get("LANGSMITH_TRACING", "false").lower() == "true":
+        llm_kwargs["langsmith_trace"] = True
     llm = get_llm_client(provider=args.llm_provider, **llm_kwargs)
 
     retriever = HybridRetriever(

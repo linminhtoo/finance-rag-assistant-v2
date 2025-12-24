@@ -116,18 +116,14 @@ class FastEmbedClientWrapper:
         raise RuntimeError("FastEmbedClientWrapper does not support chat()")
 
 
-def get_llm_client(
-    provider: str | None = None,
-    langsmith_trace: bool = False,
-    **kwargs
-) -> LLMClient:
+def get_llm_client(provider: str | None = None, langsmith_trace: bool = False, **kwargs) -> LLMClient:
     name = (provider or os.getenv("LLM_PROVIDER") or "mistral").strip().lower()
-    if langsmith_trace and name  != "openai":
+    if langsmith_trace and name != "openai":
         raise ValueError("Langsmith tracing is only supported for OpenAI provider")
-    
+
     if name == "mistral":
         return MistralClientWrapper(**kwargs)
-    if name  == "openai":
+    if name == "openai":
         return OpenAIClientWrapper(langsmith_trace=langsmith_trace, **kwargs)
     if name == "fastembed":
         return FastEmbedClientWrapper(**kwargs)
