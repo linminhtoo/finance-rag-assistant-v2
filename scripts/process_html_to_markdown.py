@@ -176,7 +176,10 @@ class CustomOpenAIService(BaseOpenAIService):
             marker_logger.warning("CustomOpenAIService[%s] blank_image_detected; skipping LLM call", request_id)
             return {}
 
-        client = wrap_openai(self.get_client(base_url=base_url, timeout=timeout))
+        client = self.get_client(base_url=base_url, timeout=timeout)
+        if os.environ.get("LANGSMITH_TRACING", "false").lower() == "true":
+            client = wrap_openai(client)
+
         image_data = self.format_image_for_llm(image)
 
         messages = []
