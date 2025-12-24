@@ -5,9 +5,12 @@ import time
 from pathlib import Path
 from urllib.parse import urljoin
 
+from dotenv import load_dotenv
 import requests
 from loguru import logger
 from tqdm import tqdm
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # required by SEC policies
 UA = "MinHtoo linmin.htoo@gmail.com"

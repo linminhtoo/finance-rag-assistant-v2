@@ -36,6 +36,11 @@ Troubleshooting cheat-sheet
 - Latency → reduce k; switch to bge-small embeddings; switch from cross-encoder to ColBERT-style later; consider API LLM.
 - Ollama OOM → use a smaller/quantized model: llama3.2:3b-instruct or mistral:7b q4_K_M.
 """
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # Backwards-compatible alias: the actual runner lives in scripts/run_eval.py.
 

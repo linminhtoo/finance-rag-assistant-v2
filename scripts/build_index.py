@@ -20,12 +20,15 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from dotenv import load_dotenv
 from loguru import logger
 from tqdm import tqdm
 
 from finrag.dataclasses import DocChunk
 from finrag.llm_clients import get_llm_client
 from finrag.retriever import HybridRetriever
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 @dataclass

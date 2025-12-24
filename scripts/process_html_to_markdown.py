@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Annotated, Any, List, cast
 
+from dotenv import load_dotenv
 import openai
 import PIL
 import weasyprint
@@ -22,8 +23,6 @@ from marker.converters.pdf import PdfConverter
 from marker.logger import get_logger
 from marker.models import create_model_dict
 
-# from marker.renderers.html import HTMLRenderer
-# from marker.renderers.json import JSONRenderer
 from marker.renderers.markdown import MarkdownOutput, MarkdownRenderer
 from marker.schema.blocks import Block
 from marker.services.openai import OpenAIService as BaseOpenAIService
@@ -31,6 +30,8 @@ from openai import APITimeoutError, RateLimitError
 from PIL import ImageStat
 from pydantic import BaseModel
 from tqdm import tqdm
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 marker_logger = get_logger()
 

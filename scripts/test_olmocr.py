@@ -1,13 +1,16 @@
-import torch
 import base64
 import urllib.request
-
 from io import BytesIO
+from pathlib import Path
+
+import torch
+from dotenv import load_dotenv
+from olmocr.data.renderpdf import render_pdf_to_base64png
+from olmocr.prompts import build_no_anchoring_v4_yaml_prompt
 from PIL import Image
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
-from olmocr.data.renderpdf import render_pdf_to_base64png
-from olmocr.prompts import build_no_anchoring_v4_yaml_prompt
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 # Initialize the model
 model = Qwen2_5_VLForConditionalGeneration.from_pretrained(

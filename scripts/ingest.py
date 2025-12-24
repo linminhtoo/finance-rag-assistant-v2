@@ -16,6 +16,7 @@ from hashlib import sha1
 from pathlib import Path
 from typing import Any, Iterable
 
+from dotenv import load_dotenv
 from loguru import logger
 from tqdm import tqdm
 
@@ -27,6 +28,8 @@ from finrag.chunk_postprocess import (
 )
 from finrag.chunking import DoclingHybridChunker
 from finrag.dataclasses import DocChunk
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 @dataclass
