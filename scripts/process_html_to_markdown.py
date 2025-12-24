@@ -52,7 +52,7 @@ class CustomOpenAIService(BaseOpenAIService):
         "Optional per-schema overrides keyed by `<module>.<SchemaName>` (e.g. "
         "`marker.processors.llm.llm_sectionheader.SectionHeaderSchema`). Supported keys include: "
         "`openai_base_url`, `openai_model`, `openai_timeout`, `openai_max_retries`, `openai_temperature`, "
-        "`max_prompt_tokens`, `hf_model_id`, `hf_revision`, `max_image_long_side`, `skip_blank_images`, "
+        "`max_prompt_tokens`, `hf_model_id`, `max_image_long_side`, `skip_blank_images`, "
         "`blank_image_variance_threshold`.",
     ] = {}
     hf_model_id: Annotated[
@@ -60,7 +60,6 @@ class CustomOpenAIService(BaseOpenAIService):
         "Optional HuggingFace model/tokenizer id used to estimate prompt token counts before sending the request. "
         "Defaults to `openai_model` when empty.",
     ] = ""
-    hf_revision: Annotated[str, "Optional HuggingFace revision for hf_model_id."] = ""
     hf_trust_remote_code: Annotated[bool, "Pass trust_remote_code=True to transformers loaders."] = True
     hf_count_image_tokens: Annotated[
         bool, "When possible, include image tokens by using an AutoProcessor and decoding data URLs to PIL Images."
@@ -155,7 +154,6 @@ class CustomOpenAIService(BaseOpenAIService):
         timeout = int(route.get("openai_timeout", self.openai_timeout))
         max_prompt_tokens = int(route.get("max_prompt_tokens", self.max_prompt_tokens))
         hf_model_id_override = (route.get("hf_model_id") or "").strip()
-        hf_revision_override = (route.get("hf_revision") or "").strip()
         max_image_long_side = int(route.get("max_image_long_side", self.max_image_long_side))
         skip_blank_images = bool(route.get("skip_blank_images", self.skip_blank_images))
         blank_variance_threshold = float(
@@ -192,11 +190,9 @@ class CustomOpenAIService(BaseOpenAIService):
                 from finrag.hf_token_count import count_tokens_openai_messages
 
                 hf_model_id = (hf_model_id_override or self.hf_model_id or model).strip()
-                revision = (hf_revision_override or self.hf_revision or "").strip() or None
                 token_info = count_tokens_openai_messages(
                     messages,
                     hf_model_id,
-                    revision=revision,
                     trust_remote_code=self.hf_trust_remote_code,
                     count_images=self.hf_count_image_tokens,
                 )
@@ -348,12 +344,12 @@ class Args:
     openai_model: str
     sectionheader_openai_base_url: str
     sectionheader_openai_model: str
+    sectionheader_hf_model_id: str
     sectionheader_timeout: int
     sectionheader_max_prompt_tokens: int
     openai_system_prompt: str
     openai_temperature: float
     hf_model_id: str
-    hf_revision: str
     hf_trust_remote_code: bool
     hf_count_image_tokens: bool
     log_prompt_token_count: bool
@@ -382,16 +378,28 @@ def parse_args() -> Args:
     parser.add_argument("--openai-system-prompt", default="", help="Optional system prompt for the LLM.")
     parser.add_argument("--openai-temperature", type=float, default=0.7, help="Sampling temperature.")
     parser.add_argument(
+        "--token-count-hf-model-id",
         "--hf-model-id",
         default="",
-        help="Optional HuggingFace model/tokenizer id used to estimate prompt token counts (defaults to --openai-model).",
+        help=(
+            "Optional HuggingFace model/tokenizer id used ONLY to estimate prompt token counts "
+            "(defaults to --openai-model)."
+        ),
     )
-    parser.add_argument("--hf-revision", default="", help="Optional HuggingFace revision for --hf-model-id.")
-    parser.add_argument(
+    hf_trust_group = parser.add_mutually_exclusive_group()
+    hf_trust_group.add_argument(
         "--hf-trust-remote-code",
+        dest="hf_trust_remote_code",
         action="store_true",
-        help="Enable trust_remote_code when loading the tokenizer/processor for token counting.",
+        help="Enable trust_remote_code when loading the tokenizer/processor for token counting (default: enabled).",
     )
+    hf_trust_group.add_argument(
+        "--no-hf-trust-remote-code",
+        dest="hf_trust_remote_code",
+        action="store_false",
+        help="Disable trust_remote_code when loading the tokenizer/processor for token counting.",
+    )
+    parser.set_defaults(hf_trust_remote_code=True)
     parser.add_argument(
         "--no-hf-count-image-tokens", action="store_true", help="Disable image token counting (only count text tokens)."
     )
@@ -458,6 +466,15 @@ def parse_args() -> Args:
         help="Optional model override for `LLMSectionHeaderProcessor` (text-only) requests.",
     )
     parser.add_argument(
+        "--sectionheader-token-count-hf-model-id",
+        "--sectionheader-hf-model-id",
+        default="",
+        help=(
+            "Optional HuggingFace model/tokenizer id used ONLY to estimate prompt token counts for "
+            "`LLMSectionHeaderProcessor` requests (falls back to --token-count-hf-model-id, then the request model)."
+        ),
+    )
+    parser.add_argument(
         "--sectionheader-timeout",
         type=int,
         default=0,
@@ -484,12 +501,12 @@ def parse_args() -> Args:
         openai_model=args.openai_model,
         sectionheader_openai_base_url=sectionheader_openai_base_url,
         sectionheader_openai_model=args.sectionheader_openai_model,
+        sectionheader_hf_model_id=args.sectionheader_token_count_hf_model_id,
         sectionheader_timeout=args.sectionheader_timeout,
         sectionheader_max_prompt_tokens=args.sectionheader_max_prompt_tokens,
         openai_system_prompt=args.openai_system_prompt,
         openai_temperature=args.openai_temperature,
-        hf_model_id=args.hf_model_id,
-        hf_revision=args.hf_revision,
+        hf_model_id=args.token_count_hf_model_id,
         hf_trust_remote_code=args.hf_trust_remote_code,
         hf_count_image_tokens=not args.no_hf_count_image_tokens,
         log_prompt_token_count=args.log_prompt_token_count,
@@ -726,19 +743,21 @@ def main():
         raise RuntimeError("--workers must be >= 1")
 
     schema_routes: dict[str, dict] = {}
+    sectionheader_schema_key = "marker.processors.llm.llm_sectionheader.SectionHeaderSchema"
     if args.sectionheader_openai_base_url:
-        schema_key = "marker.processors.llm.llm_sectionheader.SectionHeaderSchema"
         if args.sectionheader_openai_model is None or args.sectionheader_openai_model.strip() == "":
             raise RuntimeError("--sectionheader-openai-model must be set when --sectionheader-openai-base-url is set")
-        schema_routes[schema_key] = {}
-        schema_routes[schema_key]["openai_base_url"] = args.sectionheader_openai_base_url
-        schema_routes[schema_key]["openai_model"] = args.sectionheader_openai_model
+        schema_routes[sectionheader_schema_key] = {}
+        schema_routes[sectionheader_schema_key]["openai_base_url"] = args.sectionheader_openai_base_url
+        schema_routes[sectionheader_schema_key]["openai_model"] = args.sectionheader_openai_model
         if args.sectionheader_timeout and args.sectionheader_timeout > 0:
-            schema_routes[schema_key]["openai_timeout"] = args.sectionheader_timeout
+            schema_routes[sectionheader_schema_key]["openai_timeout"] = args.sectionheader_timeout
     if args.sectionheader_max_prompt_tokens and args.sectionheader_max_prompt_tokens > 0:
-        schema_key = "marker.processors.llm.llm_sectionheader.SectionHeaderSchema"
-        schema_routes.setdefault(schema_key, {})
-        schema_routes[schema_key]["max_prompt_tokens"] = args.sectionheader_max_prompt_tokens
+        schema_routes.setdefault(sectionheader_schema_key, {})
+        schema_routes[sectionheader_schema_key]["max_prompt_tokens"] = args.sectionheader_max_prompt_tokens
+    if (args.sectionheader_hf_model_id or "").strip():
+        schema_routes.setdefault(sectionheader_schema_key, {})
+        schema_routes[sectionheader_schema_key]["hf_model_id"] = args.sectionheader_hf_model_id
 
     processors_override: str | None = None
     if args.disable_forms:
@@ -764,7 +783,6 @@ def main():
         "CustomOpenAIService_openai_max_retries": args.max_retries,
         "CustomOpenAIService_schema_routes": schema_routes,
         "CustomOpenAIService_hf_model_id": args.hf_model_id,
-        "CustomOpenAIService_hf_revision": args.hf_revision,
         "CustomOpenAIService_hf_trust_remote_code": args.hf_trust_remote_code,
         "CustomOpenAIService_hf_count_image_tokens": args.hf_count_image_tokens,
         "CustomOpenAIService_log_prompt_token_count": args.log_prompt_token_count,
