@@ -236,6 +236,10 @@ class CustomOpenAIService(BaseOpenAIService):
                     timeout=timeout,
                     response_format=response_schema,
                     temperature=temperature,
+                    # TODO: try guided JSON to further robustify the structured output
+                    # need to double check cuz not sure if it accepts flexible list of dicts
+                    # since we don't know how many corrections will be needed ahead of time
+                    # extra_body={"guided_json": response_schema.model_json_schema()},
                 )
                 response_text = response.choices[0].message.content
                 if response_text is None:
@@ -374,32 +378,7 @@ def parse_args() -> Args:
     parser.add_argument(
         "--output-dir", default="outputs", help="Root output directory (writes `pdf/` and `markdown/` subfolders)."
     )
-    parser.add_argument(
-        "--openai-base-url", required=True, help="Base URL for OpenAI-compatible API (no trailing slash)."
-    )
     parser.add_argument("--openai-model", required=True, help="Model name for OpenAI-compatible API.")
-    parser.add_argument(
-        "--sectionheader-openai-base-url",
-        default="",
-        help="Optional base URL override for `LLMSectionHeaderProcessor` (text-only) requests.",
-    )
-    parser.add_argument(
-        "--sectionheader-openai-model",
-        default="",
-        help="Optional model override for `LLMSectionHeaderProcessor` (text-only) requests.",
-    )
-    parser.add_argument(
-        "--sectionheader-timeout",
-        type=int,
-        default=0,
-        help="Optional timeout override (seconds) for `LLMSectionHeaderProcessor` requests.",
-    )
-    parser.add_argument(
-        "--sectionheader-max-prompt-tokens",
-        type=int,
-        default=0,
-        help="If >0, skip `LLMSectionHeaderProcessor` requests whose estimated prompt exceeds this many tokens.",
-    )
     parser.add_argument("--openai-system-prompt", default="", help="Optional system prompt for the LLM.")
     parser.add_argument("--openai-temperature", type=float, default=0.7, help="Sampling temperature.")
     parser.add_argument(
@@ -447,10 +426,19 @@ def parse_args() -> Args:
     parser.add_argument(
         "--gpu-ids", default="", help="Optional comma-separated GPU ids to round-robin across workers (e.g., '0,1')."
     )
-    parser.add_argument(
+    forms_group = parser.add_mutually_exclusive_group()
+    forms_group.add_argument(
         "--disable-forms",
+        dest="disable_forms",
         action="store_true",
-        help="Disable `marker.processors.llm.llm_form.LLMFormProcessor` (skip all form LLM calls).",
+        default=True,
+        help="Disable `marker.processors.llm.llm_form.LLMFormProcessor` (skip all form LLM calls) (default).",
+    )
+    forms_group.add_argument(
+        "--enable-forms",
+        dest="disable_forms",
+        action="store_false",
+        help="Enable `marker.processors.llm.llm_form.LLMFormProcessor` (process forms).",
     )
     parser.add_argument(
         "--drop-front-pages",
@@ -464,13 +452,37 @@ def parse_args() -> Args:
         default=0,
         help="Skip the last N pages of each PDF for Marker processing (0 = keep all).",
     )
+    parser.add_argument(
+        "--sectionheader-openai-model",
+        default="",
+        help="Optional model override for `LLMSectionHeaderProcessor` (text-only) requests.",
+    )
+    parser.add_argument(
+        "--sectionheader-timeout",
+        type=int,
+        default=0,
+        help="Optional timeout override (seconds) for `LLMSectionHeaderProcessor` requests.",
+    )
+    parser.add_argument(
+        "--sectionheader-max-prompt-tokens",
+        type=int,
+        default=0,
+        help="If >0, skip `LLMSectionHeaderProcessor` requests whose estimated prompt exceeds this many tokens.",
+    )
     args = parser.parse_args()
+
+    openai_base_url = (os.environ.get("OPENAI_BASE_URL") or "").strip()
+    if not openai_base_url:
+        raise RuntimeError("Set OPENAI_BASE_URL in `.env` (or the environment) before running.")
+
+    sectionheader_openai_base_url = (os.environ.get("SECTIONHEADER_OPENAI_BASE_URL") or "").strip()
+
     return Args(
         html_dir=args.html_dir,
         output_dir=args.output_dir,
-        openai_base_url=args.openai_base_url,
+        openai_base_url=openai_base_url,
         openai_model=args.openai_model,
-        sectionheader_openai_base_url=args.sectionheader_openai_base_url,
+        sectionheader_openai_base_url=sectionheader_openai_base_url,
         sectionheader_openai_model=args.sectionheader_openai_model,
         sectionheader_timeout=args.sectionheader_timeout,
         sectionheader_max_prompt_tokens=args.sectionheader_max_prompt_tokens,
@@ -569,9 +581,6 @@ def get_pdf_page_count(pdf_path: Path) -> int:
 def process_one(
     html_file_path: Path, html_dir: Path, pdf_root: Path, md_root: Path, debug_root: Path, args_dict: dict
 ) -> None:
-    # hack: sleep a bit to stagger LLM requests
-    # time.sleep(random.uniform(10, 30))
-
     worker_converter, worker_markdown_renderer, renderer_config = get_worker_pipeline()
     converter_config = worker_converter.config
     if converter_config is None or not isinstance(converter_config, dict):
@@ -635,15 +644,6 @@ def process_one(
 
     with open(debug_dir / "metadata.json", "w") as f:
         json.dump(rendered.metadata, f, indent=2)
-
-    # also save HTML and JSON renderings for debugging
-    # html_out = html_renderer(document)
-    # with open(debug_dir / "document.html", "w") as f:
-    #     f.write(html_out.html)
-
-    # json_out = json_renderer(document)
-    # with open(debug_dir / "document.json", "w") as f:
-    #     f.write(json_out.model_dump_json(indent=2))
 
     with open(debug_dir / "run_info.json", "w") as f:
         json.dump(
@@ -726,14 +726,13 @@ def main():
         raise RuntimeError("--workers must be >= 1")
 
     schema_routes: dict[str, dict] = {}
-    # TODO: conditional needs to be improved. need to ensure both URL and model are set
-    if args.sectionheader_openai_base_url or args.sectionheader_openai_model or args.sectionheader_timeout:
+    if args.sectionheader_openai_base_url:
         schema_key = "marker.processors.llm.llm_sectionheader.SectionHeaderSchema"
+        if args.sectionheader_openai_model is None or args.sectionheader_openai_model.strip() == "":
+            raise RuntimeError("--sectionheader-openai-model must be set when --sectionheader-openai-base-url is set")
         schema_routes[schema_key] = {}
-        if args.sectionheader_openai_base_url:
-            schema_routes[schema_key]["openai_base_url"] = args.sectionheader_openai_base_url
-        if args.sectionheader_openai_model:
-            schema_routes[schema_key]["openai_model"] = args.sectionheader_openai_model
+        schema_routes[schema_key]["openai_base_url"] = args.sectionheader_openai_base_url
+        schema_routes[schema_key]["openai_model"] = args.sectionheader_openai_model
         if args.sectionheader_timeout and args.sectionheader_timeout > 0:
             schema_routes[schema_key]["openai_timeout"] = args.sectionheader_timeout
     if args.sectionheader_max_prompt_tokens and args.sectionheader_max_prompt_tokens > 0:
