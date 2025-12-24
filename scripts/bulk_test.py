@@ -36,9 +36,12 @@ Troubleshooting cheat-sheet
 - Latency → reduce k; switch to bge-small embeddings; switch from cross-encoder to ColBERT-style later; consider API LLM.
 - Ollama OOM → use a smaller/quantized model: llama3.2:3b-instruct or mistral:7b q4_K_M.
 """
+
 from pathlib import Path
 
 from dotenv import load_dotenv
+
+from run_eval import main
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -55,7 +58,6 @@ Run it:
 Generate eval set: python3 scripts/make_eval_set.py --data-dir ./data --out ./eval/eval_set.jsonl --max-docs 200 --n-quant 30 --n-qual 30 --n-mixed 10 --n-series 5 (repos/z_scratch/financial-rag/README.md (line 29))
 Run eval: python3 scripts/run_eval.py --data-dir ./data --eval-set ./eval/eval_set.jsonl --out-dir ./results --max-docs 200 --no-reranker (repos/z_scratch/financial-rag/README.md (line 48))
 """
-from run_eval import main
 
 
 if __name__ == "__main__":
