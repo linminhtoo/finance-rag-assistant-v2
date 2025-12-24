@@ -261,6 +261,7 @@ def main() -> int:
     output_chunks_root.mkdir(parents=True, exist_ok=True)
 
     log_path = _setup_logging(project_root)
+    logger.info(f"Project root: {project_root}")
     logger.info(f"Logging to: {log_path}")
 
     md_files = [
@@ -297,7 +298,8 @@ def main() -> int:
             if out_path.exists() and not args.overwrite:
                 logger.info(f"Skipping (exists): {out_path}")
                 continue
-
+            
+            doc_start_time = time.time()
             doc_id = _make_doc_id(md_path, markdown_root=markdown_root, strategy=args.doc_id_strategy)
             try:
                 chunks = chunker.chunk_document(str(md_path), doc_id)
@@ -312,11 +314,16 @@ def main() -> int:
                     "relpath": rel,
                     "chunks_path": str(out_path),
                     "num_chunks": len(chunks),
+                    "chunk_time_s": round(time.time() - doc_start_time, 3),
                 }
                 doc_index_f.write(json.dumps(rec, ensure_ascii=False, default=_json_default) + "\n")
 
                 processed += 1
                 total_chunks += len(chunks)
+                logger.success(
+                    f"Chunked {md_path} -> {out_path} | chunks={len(chunks)} | time_s={rec['chunk_time_s']}"
+                )
+
             except Exception as e:  # noqa: BLE001 - best-effort batch processing
                 logger.exception(f"Failed to chunk {md_path}: {e}")
                 err = {"source": str(md_path), "relpath": rel, "error": repr(e)}
