@@ -2,6 +2,14 @@
 
 RAG experiments over SEC filings (e.g. 10-K / 10-Q) with an end-to-end evaluation workflow.
 
+## Configuration (.env)
+
+Put secrets and local configuration in a project root `.env` file (gitignored). Start from:
+
+```bash
+cp .env.example .env
+```
+
 ## Data: download SEC filings
 
 `scripts/download.py` downloads EDGAR filings into a local folder:
