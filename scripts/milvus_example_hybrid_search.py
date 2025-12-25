@@ -2,6 +2,7 @@
 Adapted from:
 https://milvus.io/docs/contextual_retrieval_with_milvus.md
 """
+
 from __future__ import annotations
 
 import argparse
@@ -15,12 +16,7 @@ from typing import Any, Callable, Protocol, TypedDict
 from dotenv import load_dotenv
 from loguru import logger
 from openai import OpenAI
-from pymilvus import (
-    AnnSearchRequest,
-    DataType,
-    MilvusClient,
-    RRFRanker,
-)
+from pymilvus import AnnSearchRequest, DataType, MilvusClient, RRFRanker
 from pymilvus.model.dense import OpenAIEmbeddingFunction
 from pymilvus.model.hybrid import BGEM3EmbeddingFunction
 from pymilvus.model.sparse import BM25EmbeddingFunction
@@ -201,37 +197,19 @@ class MilvusContextualRetriever:
     def build_collection(self):
         dense_dim = self._dense_dim()
 
-        schema = self.client.create_schema(
-            auto_id=True,
-            enable_dynamic_field=True,
-        )
+        schema = self.client.create_schema(auto_id=True, enable_dynamic_field=True)
         schema.add_field(field_name="pk", datatype=DataType.INT64, is_primary=True)
-        schema.add_field(
-            field_name="dense_vector",
-            datatype=DataType.FLOAT_VECTOR,
-            dim=dense_dim,
-        )
+        schema.add_field(field_name="dense_vector", datatype=DataType.FLOAT_VECTOR, dim=dense_dim)
         if self.use_sparse:
-            schema.add_field(
-                field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR
-            )
+            schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
 
         index_params = self.client.prepare_index_params()
-        index_params.add_index(
-            field_name="dense_vector", index_type="FLAT", metric_type="IP"
-        )
+        index_params.add_index(field_name="dense_vector", index_type="FLAT", metric_type="IP")
         if self.use_sparse:
-            index_params.add_index(
-                field_name="sparse_vector",
-                index_type="SPARSE_INVERTED_INDEX",
-                metric_type="IP",
-            )
+            index_params.add_index(field_name="sparse_vector", index_type="SPARSE_INVERTED_INDEX", metric_type="IP")
 
         self.client.create_collection(
-            collection_name=self.collection_name,
-            schema=schema,
-            index_params=index_params,
-            enable_dynamic_field=True,
+            collection_name=self.collection_name, schema=schema, index_params=index_params, enable_dynamic_field=True
         )
 
     def insert_data(self, chunk: str, metadata: dict[str, Any]) -> None:
@@ -241,17 +219,10 @@ class MilvusContextualRetriever:
                 raise RuntimeError("use_sparse=True but sparse_vec is None")
             self.client.insert(
                 collection_name=self.collection_name,
-                data={
-                    "dense_vector": dense_vec,
-                    "sparse_vector": sparse_vec,
-                    **metadata,
-                },
+                data={"dense_vector": dense_vec, "sparse_vector": sparse_vec, **metadata},
             )
         else:
-            self.client.insert(
-                collection_name=self.collection_name,
-                data={"dense_vector": dense_vec, **metadata},
-            )
+            self.client.insert(collection_name=self.collection_name, data={"dense_vector": dense_vec, **metadata})
 
     def insert_contextualized_data(self, doc: str, chunk: str, metadata: dict[str, Any]) -> None:
         contextualized_text, _usage = self.situate_context(doc, chunk)
@@ -266,17 +237,10 @@ class MilvusContextualRetriever:
                 raise RuntimeError("use_sparse=True but sparse_vec is None")
             self.client.insert(
                 collection_name=self.collection_name,
-                data={
-                    "dense_vector": dense_vec,
-                    "sparse_vector": sparse_vec,
-                    **metadata,
-                },
+                data={"dense_vector": dense_vec, "sparse_vector": sparse_vec, **metadata},
             )
         else:
-            self.client.insert(
-                collection_name=self.collection_name,
-                data={"dense_vector": dense_vec, **metadata},
-            )
+            self.client.insert(collection_name=self.collection_name, data={"dense_vector": dense_vec, **metadata})
 
     def situate_context(self, doc: str, chunk: str) -> tuple[str, Any]:
         if self.openai_client is None:
@@ -308,16 +272,10 @@ class MilvusContextualRetriever:
                     {
                         "role": "user",
                         "content": [
-                            {
-                                "type": "text",
-                                "text": DOCUMENT_CONTEXT_PROMPT.format(doc_content=doc),
-                            },
-                            {
-                                "type": "text",
-                                "text": CHUNK_CONTEXT_PROMPT.format(chunk_content=chunk),
-                            },
+                            {"type": "text", "text": DOCUMENT_CONTEXT_PROMPT.format(doc_content=doc)},
+                            {"type": "text", "text": CHUNK_CONTEXT_PROMPT.format(chunk_content=chunk)},
                         ],
-                    },
+                    }
                 ],
             )
             content = response.choices[0].message.content
@@ -365,14 +323,7 @@ class MilvusContextualRetriever:
                 req_list,
                 RRFRanker(),
                 k,
-                output_fields=[
-                    "content",
-                    "original_uuid",
-                    "doc_id",
-                    "chunk_id",
-                    "original_index",
-                    "context",
-                ],
+                output_fields=["content", "original_uuid", "doc_id", "chunk_id", "original_index", "context"],
             )
         else:
             docs = self.client.search(
@@ -380,16 +331,9 @@ class MilvusContextualRetriever:
                 data=[dense_vec],
                 anns_field="dense_vector",
                 limit=k,
-                output_fields=[
-                    "content",
-                    "original_uuid",
-                    "doc_id",
-                    "chunk_id",
-                    "original_index",
-                    "context",
-                ],
+                output_fields=["content", "original_uuid", "doc_id", "chunk_id", "original_index", "context"],
             )
-        
+
         if self.use_reranker:
             if self.rerank_function is None:
                 raise RuntimeError("use_reranker=True but rerank_function is None")
@@ -428,30 +372,14 @@ def evaluate_retrieval(
         # Find all golden chunk contents
         golden_contents = []
         for doc_uuid, chunk_index in golden_chunk_uuids:
-            golden_doc = next(
-                (
-                    doc
-                    for doc in query_item["golden_documents"]
-                    if doc["uuid"] == doc_uuid
-                ),
-                None,
-            )
+            golden_doc = next((doc for doc in query_item["golden_documents"] if doc["uuid"] == doc_uuid), None)
             if not golden_doc:
                 logger.warning(f"Golden document not found for UUID {doc_uuid}")
                 continue
 
-            golden_chunk = next(
-                (
-                    chunk
-                    for chunk in golden_doc["chunks"]
-                    if chunk["index"] == chunk_index
-                ),
-                None,
-            )
+            golden_chunk = next((chunk for chunk in golden_doc["chunks"] if chunk["index"] == chunk_index), None)
             if not golden_chunk:
-                logger.warning(
-                    f"Golden chunk not found for index {chunk_index} in document {doc_uuid}"
-                )
+                logger.warning(f"Golden chunk not found for index {chunk_index} in document {doc_uuid}")
                 continue
 
             golden_contents.append(golden_chunk["content"].strip())
@@ -476,11 +404,7 @@ def evaluate_retrieval(
 
     average_score = total_score / total_queries
     pass_at_n = average_score * 100
-    return {
-        "pass_at_n": pass_at_n,
-        "average_score": average_score,
-        "total_queries": total_queries,
-    }
+    return {"pass_at_n": pass_at_n, "average_score": average_score, "total_queries": total_queries}
 
 
 def retrieve_base(query: str, db: Any, k: int = 20) -> MilvusSearchResults:
@@ -563,8 +487,12 @@ class Args:
 
 BGE_DEFAULT_RERANKER = "BAAI/bge-reranker-v2-gemma"
 CROSSENCODER_DEFAULT_RERANKER = "cross-encoder/ms-marco-MiniLM-L6-v2"
+
+
 def parse_args() -> Args:
-    parser = argparse.ArgumentParser(description="Milvus hybrid search example (BGE-M3 dense+sparse + optional rerank).")
+    parser = argparse.ArgumentParser(
+        description="Milvus hybrid search example (BGE-M3 dense+sparse + optional rerank)."
+    )
     parser.add_argument(
         "--input-chunks-path",
         default="codebase_chunks.json",
@@ -585,10 +513,7 @@ def parse_args() -> Args:
     )
 
     parser.add_argument(
-        "--dense-embedding",
-        choices=["bge-m3", "openai"],
-        default="bge-m3",
-        help="Dense embedding backend to use.",
+        "--dense-embedding", choices=["bge-m3", "openai"], default="bge-m3", help="Dense embedding backend to use."
     )
     parser.add_argument(
         "--openai-embedding-model",
@@ -605,10 +530,7 @@ def parse_args() -> Args:
         ),
     )
     parser.add_argument(
-        "--sparse-embedding",
-        choices=["bge-m3", "bm25"],
-        default="bge-m3",
-        help="Sparse embedding backend to use.",
+        "--sparse-embedding", choices=["bge-m3", "bm25"], default="bge-m3", help="Sparse embedding backend to use."
     )
     parser.add_argument(
         "--bm25-load-path",
@@ -665,10 +587,7 @@ def parse_args() -> Args:
     parser.set_defaults(use_reranker=True)
 
     parser.add_argument(
-        "--reranker-type",
-        choices=["bge", "cross-encoder"],
-        default="cross-encoder",
-        help="Which reranker to use.",
+        "--reranker-type", choices=["bge", "cross-encoder"], default="cross-encoder", help="Which reranker to use."
     )
     parser.add_argument(
         "--reranker-model-name",
@@ -734,12 +653,7 @@ def _build_openai_client(*, api_key: str | None, base_url: str | None) -> OpenAI
         raise SystemExit("Missing OpenAI API key: set `.env` `api_key` or pass `--openai-api-key`.")
     if not base_url:
         raise SystemExit("Missing OpenAI base URL: set `.env` `base_url` or pass `--openai-base-url`.")
-    kwargs: dict[str, Any] = {
-        "api_key": api_key,
-        "base_url": base_url,
-        "max_retries": 1,
-        "timeout": 120,
-    }
+    kwargs: dict[str, Any] = {"api_key": api_key, "base_url": base_url, "max_retries": 1, "timeout": 120}
     return OpenAI(**kwargs)
 
 
