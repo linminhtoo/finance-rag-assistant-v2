@@ -1,26 +1,36 @@
 #!/bin/bash
+set -euo pipefail
+
+source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
 now=$(date +"%Y%m%d_%H%M%S")
 
 # TorchInductor/Triton default to `/tmp`, which can be unwritable on shared systems
 # (e.g. stale `/tmp/torchinductor_$USER` owned by someone else). Force caches into
 # the user's home dir to avoid PermissionError.
-export XDG_CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
-export TORCHINDUCTOR_CACHE_DIR="${TORCHINDUCTOR_CACHE_DIR:-$XDG_CACHE_HOME/torchinductor}"
-export TRITON_CACHE_DIR="${TRITON_CACHE_DIR:-$XDG_CACHE_HOME/triton}"
-export TMPDIR="${TMPDIR:-$XDG_CACHE_HOME/tmp}"
+: "${XDG_CACHE_HOME:=$HOME/.cache}"
+: "${TORCHINDUCTOR_CACHE_DIR:=$XDG_CACHE_HOME/torchinductor}"
+: "${TRITON_CACHE_DIR:=$XDG_CACHE_HOME/triton}"
+: "${TMPDIR:=$XDG_CACHE_HOME/tmp}"
+export XDG_CACHE_HOME TORCHINDUCTOR_CACHE_DIR TRITON_CACHE_DIR TMPDIR
 mkdir -p "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR" "$TMPDIR"
 # export CUDA_VISIBLE_DEVICES=1
-export CUDA_VISIBLE_DEVICES=0,1
+: "${CUDA_VISIBLE_DEVICES:=0,1}"
+export CUDA_VISIBLE_DEVICES
 # THIS (TO GET 2 TENSOR PARALLEL WORKERS) DOES NOT WORK ON A40. the VLLM workers will hang!
 # export NCCL_P2P_DISABLE=1
-export NCCL_P2P_LEVEL=PIX
+: "${NCCL_P2P_LEVEL:=PIX}"
+export NCCL_P2P_LEVEL
 # export NCCL_SHM_DISABLE=1
-export VLLM_WORKER_MULTIPROC_METHOD=spawn
+: "${VLLM_WORKER_MULTIPROC_METHOD:=spawn}"
+export VLLM_WORKER_MULTIPROC_METHOD
 
 # see: https://docs.vllm.ai/en/latest/examples/online_serving/opentelemetry/
-export OTEL_SERVICE_NAME="vllm-server"
-export OTEL_EXPORTER_OTLP_TRACES_INSECURE=true
+: "${OTEL_SERVICE_NAME:=vllm-server}"
+: "${OTEL_EXPORTER_OTLP_TRACES_INSECURE:=true}"
+export OTEL_SERVICE_NAME OTEL_EXPORTER_OTLP_TRACES_INSECURE
+: "${VLLM_API_KEY:=test}"
+: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:=grpc://127.0.0.1:4317}"
 
 # try Olmo's finetuned and RL'ed document understanding model
 # vllm serve allenai/olmOCR-2-7B-1025 \
@@ -30,16 +40,16 @@ export OTEL_EXPORTER_OTLP_TRACES_INSECURE=true
 # yay, this finally works on 1 x A40!
 # NOTE: bcos A40 is old, it doesn't support FP8, so just use the BF16 version.
 vllm serve allenai/olmOCR-2-7B-1025 \
-    --tensor-parallel-size 2 \
-    --disable-custom-all-reduce \
-    --max-model-len 65000 \
+	    --tensor-parallel-size 2 \
+	    --disable-custom-all-reduce \
+	    --max-model-len 65000 \
     --gpu-memory-utilization 0.725 \
     --max-num-batched-token 32 \
-    --host 0.0.0.0 \
-    --port 8989 \
-    --api-key test \
-    --otlp-traces-endpoint grpc://127.0.0.1:4317 \
-    2>&1 | tee ../logs/vllm_process_pdf/serve_vllm_olmocr_2_7b_tp2_disableAR_$now.log
+	    --host 0.0.0.0 \
+	    --port 8989 \
+	    --api-key "$VLLM_API_KEY" \
+	    --otlp-traces-endpoint "$OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" \
+	    2>&1 | tee ../logs/vllm_process_pdf/serve_vllm_olmocr_2_7b_tp2_disableAR_$now.log
 
 # ERROR: both FP8 and BF16 versions need cuda 12.9 ... we are still on cuda 12.8
 # solution is to `sudo apt-get install cuda-compat-12-9`
