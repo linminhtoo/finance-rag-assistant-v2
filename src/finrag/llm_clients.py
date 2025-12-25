@@ -100,7 +100,7 @@ class FastEmbedClientWrapper:
     This is useful for running retrieval-only evals without networked embedding APIs.
     """
 
-    def __init__(self, embed_model: str = "BAAI/bge-small-en-v1.5"):
+    def __init__(self, embed_model: str = "BAAI/bge-m3"):
         try:
             from fastembed import TextEmbedding  # type: ignore
         except Exception as e:  # pragma: no cover
