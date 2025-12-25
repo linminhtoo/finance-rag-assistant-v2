@@ -2,6 +2,8 @@
 Adapted from:
 https://milvus.io/docs/contextual_retrieval_with_milvus.md
 """
+from __future__ import annotations
+
 import argparse
 import json
 import os
@@ -19,8 +21,9 @@ from pymilvus import (
     MilvusClient,
     RRFRanker,
 )
-# from pymilvus.model.dense import OpenAIEmbeddingFunction
+from pymilvus.model.dense import OpenAIEmbeddingFunction
 from pymilvus.model.hybrid import BGEM3EmbeddingFunction
+from pymilvus.model.sparse import BM25EmbeddingFunction
 from pymilvus.model.reranker import BGERerankFunction, CrossEncoderRerankFunction
 from tqdm import tqdm
 
@@ -38,6 +41,19 @@ class RerankResultLike(Protocol):
 
 class Reranker(Protocol):
     def __call__(self, query: str, documents: list[str], top_k: int = 5) -> list[RerankResultLike]: ...
+
+
+class DenseEmbedder(Protocol):
+    @property
+    def dim(self) -> Any: ...
+
+    def __call__(self, texts: list[str]) -> Any: ...
+
+
+class SparseEmbedder(Protocol):
+    def encode_documents(self, documents: list[str]) -> Any: ...
+
+    def encode_queries(self, queries: list[str]) -> Any: ...
 
 
 class ChunkRecord(TypedDict):
@@ -59,20 +75,42 @@ class EvalResults(TypedDict):
     total_queries: int
 
 
+def _neighbor_chunks_context(chunks: list[ChunkRecord], *, chunk_id: str, window: int) -> str:
+    if window <= 0 or not chunks:
+        return ""
+
+    sorted_chunks = sorted(chunks, key=lambda c: int(c.get("original_index") or 0))
+    id_to_pos: dict[str, int] = {}
+    for idx, c in enumerate(sorted_chunks):
+        cid = str(c.get("chunk_id") or "")
+        if cid and cid not in id_to_pos:
+            id_to_pos[cid] = idx
+    pos = id_to_pos.get(chunk_id)
+    if pos is None:
+        return ""
+
+    before = sorted_chunks[max(0, pos - window) : pos]
+    after = sorted_chunks[pos + 1 : pos + 1 + window]
+    parts: list[str] = []
+    if before:
+        parts.append("Previous chunks:\n" + "\n\n".join(str(c.get("content") or "") for c in before))
+    if after:
+        parts.append("Next chunks:\n" + "\n\n".join(str(c.get("content") or "") for c in after))
+    return "\n\n".join(p for p in parts if p.strip())
+
+
 class MilvusContextualRetriever:
     def __init__(
         self,
         *,
         uri: str = "./data/milvus.db",
         collection_name: str = "example",
-        # NOTE: typehinting as BaseEmbeddingFunction results in a lot of pylance errors
-        # bcos pymilvus did not typehint return value of __call__
-        # we can bypass it by using Protocol
-        embedding_function: BGEM3EmbeddingFunction,
+        dense_embedding_function: DenseEmbedder,
         use_sparse: bool = True,
+        sparse_embedding_function: SparseEmbedder | BGEM3EmbeddingFunction | None = None,
         use_contextualize_embedding: bool = False,
         openai_client: OpenAI | None = None,
-        context_model: str = "",
+        context_model: str = "claude-3-haiku-20240307",
         context_max_tokens: int = 1000,
         use_reranker: bool = False,
         rerank_function: Reranker | None = None,
@@ -85,9 +123,10 @@ class MilvusContextualRetriever:
         # For Zilliz Clond, please set `uri` and `token`, which correspond to the [Public Endpoint and API key](https://docs.zilliz.com/docs/on-zilliz-cloud-console#cluster-details) in Zilliz Cloud.
         self.client = MilvusClient(uri)
 
-        self.embedding_function = embedding_function
+        self.dense_embedding_function = dense_embedding_function
 
         self.use_sparse = use_sparse
+        self.sparse_embedding_function = sparse_embedding_function
 
         self.use_contextualize_embedding = use_contextualize_embedding
         self.openai_client = openai_client
@@ -102,11 +141,65 @@ class MilvusContextualRetriever:
             raise ValueError("OpenAI client must be provided when use_contextualize_embedding=True")
         if self.use_reranker and self.rerank_function is None:
             raise ValueError("rerank_function must be provided when use_reranker=True")
+        if self.use_sparse and self.sparse_embedding_function is None:
+            raise ValueError("sparse_embedding_function must be provided when use_sparse=True")
+
+    def _dense_dim(self) -> int:
+        dim = getattr(self.dense_embedding_function, "dim", None)
+        if isinstance(dim, int):
+            return dim
+        if isinstance(dim, dict) and isinstance(dim.get("dense"), int):
+            return int(dim["dense"])
+        raise ValueError(f"Unexpected dense embedding dim: {dim!r}")
+
+    def _sparse_from_documents(self, texts: list[str]) -> Any | None:
+        if not self.use_sparse:
+            return None
+        if self.sparse_embedding_function is None:
+            raise RuntimeError("use_sparse=True but sparse_embedding_function is None")
+        if isinstance(self.sparse_embedding_function, BGEM3EmbeddingFunction):
+            return self.sparse_embedding_function(texts)["sparse"]
+        if isinstance(self.sparse_embedding_function, BM25EmbeddingFunction):
+            return self.sparse_embedding_function.encode_documents(texts)
+        if hasattr(self.sparse_embedding_function, "encode_documents"):
+            return self.sparse_embedding_function.encode_documents(texts)
+        raise RuntimeError("sparse_embedding_function does not support encode_documents")
+
+    def _sparse_from_queries(self, texts: list[str]) -> Any | None:
+        if not self.use_sparse:
+            return None
+        if self.sparse_embedding_function is None:
+            raise RuntimeError("use_sparse=True but sparse_embedding_function is None")
+        if isinstance(self.sparse_embedding_function, BGEM3EmbeddingFunction):
+            return self.sparse_embedding_function(texts)["sparse"]
+        if isinstance(self.sparse_embedding_function, BM25EmbeddingFunction):
+            return self.sparse_embedding_function.encode_queries(texts)
+        if hasattr(self.sparse_embedding_function, "encode_queries"):
+            return self.sparse_embedding_function.encode_queries(texts)
+        raise RuntimeError("sparse_embedding_function does not support encode_queries")
+
+    def _embed_chunk(self, text: str) -> tuple[Any, Any | None]:
+        if isinstance(self.dense_embedding_function, BGEM3EmbeddingFunction):
+            embeddings = self.dense_embedding_function([text])
+            dense_vec = embeddings["dense"][0]
+        else:
+            dense_vec = self.dense_embedding_function([text])[0]
+        sparse_embeddings = self._sparse_from_documents([text])
+        sparse_vec = sparse_embeddings[[0]] if sparse_embeddings is not None else None
+        return dense_vec, sparse_vec
+
+    def _embed_query(self, text: str) -> tuple[Any, Any | None]:
+        if isinstance(self.dense_embedding_function, BGEM3EmbeddingFunction):
+            embeddings = self.dense_embedding_function([text])
+            dense_vec = embeddings["dense"][0]
+        else:
+            dense_vec = self.dense_embedding_function([text])[0]
+        sparse_embeddings = self._sparse_from_queries([text])
+        sparse_vec = sparse_embeddings[[0]] if sparse_embeddings is not None else None
+        return dense_vec, sparse_vec
 
     def build_collection(self):
-        dense_dim = self.embedding_function.dim.get("dense")
-        if not isinstance(dense_dim, int):
-            raise ValueError(f"Unexpected embedding dim for dense vectors: {self.embedding_function.dim!r}")
+        dense_dim = self._dense_dim()
 
         schema = self.client.create_schema(
             auto_id=True,
@@ -142,10 +235,10 @@ class MilvusContextualRetriever:
         )
 
     def insert_data(self, chunk: str, metadata: dict[str, Any]) -> None:
-        embeddings = self.embedding_function([chunk])
-        dense_vec = embeddings["dense"][0]
+        dense_vec, sparse_vec = self._embed_chunk(chunk)
         if self.use_sparse:
-            sparse_vec = embeddings["sparse"][[0]]
+            if sparse_vec is None:
+                raise RuntimeError("use_sparse=True but sparse_vec is None")
             self.client.insert(
                 collection_name=self.collection_name,
                 data={
@@ -167,10 +260,10 @@ class MilvusContextualRetriever:
             text_to_embed = f"{chunk}\n\n{contextualized_text}"
         else:
             text_to_embed = chunk
-        embeddings = self.embedding_function([text_to_embed])
-        dense_vec = embeddings["dense"][0]
+        dense_vec, sparse_vec = self._embed_chunk(text_to_embed)
         if self.use_sparse:
-            sparse_vec = embeddings["sparse"][[0]]
+            if sparse_vec is None:
+                raise RuntimeError("use_sparse=True but sparse_vec is None")
             self.client.insert(
                 collection_name=self.collection_name,
                 data={
@@ -237,10 +330,9 @@ class MilvusContextualRetriever:
             return "", None
 
     def search(self, query: str, k: int = 20) -> MilvusSearchResults:
-        embeddings = self.embedding_function([query])
-        dense_vec = embeddings["dense"][0]
-        if self.use_sparse:
-            sparse_vec = embeddings["sparse"][[0]]
+        dense_vec, sparse_vec = self._embed_query(query)
+        if self.use_sparse and sparse_vec is None:
+            raise RuntimeError("use_sparse=True but sparse_vec is None")
 
         req_list = []
         if self.use_reranker:
@@ -421,8 +513,8 @@ def _env_default(key: str) -> str | None:
 
 
 def _openai_config_from_env() -> tuple[str | None, str | None]:
-    api_key = _env_default("OPENAI_API_KEY")
-    base_url = _env_default("OPENAI_BASE_URL")
+    api_key = _env_default("api_key") or _env_default("OPENAI_API_KEY")
+    base_url = _env_default("base_url") or _env_default("OPENAI_BASE_URL")
     return api_key, base_url
 
 
@@ -443,8 +535,16 @@ class Args:
     collection_name: str
     k: int
     recreate_collection: bool
+    dense_embedding: str
+    openai_embedding_model: str
+    openai_embedding_dimensions: int | None
+    sparse_embedding: str
+    bm25_load_path: str | None
+    bm25_save_path: str | None
     use_sparse: bool
     use_contextualize_embedding: bool
+    context_source: str
+    neighbor_window: int
     context_model: str
     context_max_tokens: int
     use_reranker: bool
@@ -455,9 +555,14 @@ class Args:
     openai_base_url: str | None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        data = asdict(self)
+        if data.get("openai_api_key"):
+            data["openai_api_key"] = "***"
+        return data
 
 
+BGE_DEFAULT_RERANKER = "BAAI/bge-reranker-v2-gemma"
+CROSSENCODER_DEFAULT_RERANKER = "cross-encoder/ms-marco-MiniLM-L6-v2"
 def parse_args() -> Args:
     parser = argparse.ArgumentParser(description="Milvus hybrid search example (BGE-M3 dense+sparse + optional rerank).")
     parser.add_argument(
@@ -477,6 +582,43 @@ def parse_args() -> Args:
         "--recreate-collection",
         action="store_true",
         help="Drop and recreate the collection before inserting (destructive).",
+    )
+
+    parser.add_argument(
+        "--dense-embedding",
+        choices=["bge-m3", "openai"],
+        default="bge-m3",
+        help="Dense embedding backend to use.",
+    )
+    parser.add_argument(
+        "--openai-embedding-model",
+        default="text-embedding-3-small",
+        help="OpenAI embedding model name (used when --dense-embedding=openai). This includes locally hosted vLLM backend.",
+    )
+    parser.add_argument(
+        "--openai-embedding-dimensions",
+        type=int,
+        default=None,
+        help=(
+            "Optional embedding dimensions override (used when --dense-embedding=openai). "
+            "Ensure to set this if you're locally hosting a vLLM backend."
+        ),
+    )
+    parser.add_argument(
+        "--sparse-embedding",
+        choices=["bge-m3", "bm25"],
+        default="bge-m3",
+        help="Sparse embedding backend to use.",
+    )
+    parser.add_argument(
+        "--bm25-load-path",
+        default=None,
+        help="Load BM25 parameters from a JSON file (only used when --sparse-embedding=bm25).",
+    )
+    parser.add_argument(
+        "--bm25-save-path",
+        default=None,
+        help="Save BM25 parameters to a JSON file after fitting (only used when --sparse-embedding=bm25).",
     )
 
     sparse_group = parser.add_mutually_exclusive_group()
@@ -499,6 +641,18 @@ def parse_args() -> Args:
     )
     parser.set_defaults(use_contextualize_embedding=False)
     parser.add_argument(
+        "--context-source",
+        choices=["neighbors", "document"],
+        default="neighbors",
+        help="When contextualizing, use either neighboring chunks or the full document as context.",
+    )
+    parser.add_argument(
+        "--neighbor-window",
+        type=int,
+        default=4,
+        help="How many chunks before/after to include when --context-source=neighbors.",
+    )
+    parser.add_argument(
         "--context-model",
         default="claude-3-haiku-20240307",
         help="Name of model to be used for contextualization, accessed via OpenAI-compatible API.",
@@ -519,7 +673,11 @@ def parse_args() -> Args:
     parser.add_argument(
         "--reranker-model-name",
         default=None,
-        help="Model name passed to the chosen reranker.",
+        help=(
+            "Name of reranker model. Must be compatible with chosen --reranker-type. "
+            f"If not specified, defaults to {BGE_DEFAULT_RERANKER} for 'bge' and "
+            f"{CROSSENCODER_DEFAULT_RERANKER} for 'cross-encoder'."
+        ),
     )
     parser.add_argument("--rerank-top-k", type=int, default=5, help="How many reranked hits to keep.")
 
@@ -544,8 +702,16 @@ def parse_args() -> Args:
         collection_name=str(ns.collection_name),
         k=int(ns.k),
         recreate_collection=bool(ns.recreate_collection),
+        dense_embedding=str(ns.dense_embedding),
+        openai_embedding_model=str(ns.openai_embedding_model),
+        openai_embedding_dimensions=ns.openai_embedding_dimensions,
+        sparse_embedding=str(ns.sparse_embedding),
+        bm25_load_path=str(ns.bm25_load_path) if ns.bm25_load_path else None,
+        bm25_save_path=str(ns.bm25_save_path) if ns.bm25_save_path else None,
         use_sparse=bool(ns.use_sparse),
         use_contextualize_embedding=bool(ns.use_contextualize_embedding),
+        context_source=str(ns.context_source),
+        neighbor_window=int(ns.neighbor_window),
         context_model=str(ns.context_model),
         context_max_tokens=int(ns.context_max_tokens),
         use_reranker=bool(ns.use_reranker),
@@ -553,7 +719,7 @@ def parse_args() -> Args:
         reranker_model_name=(
             str(ns.reranker_model_name)
             if ns.reranker_model_name
-            else ("BAAI/bge-reranker-v2-m3" if str(ns.reranker_type) == "bge" else "cross-encoder/ms-marco-MiniLM-L6-v2")
+            else (BGE_DEFAULT_RERANKER if str(ns.reranker_type) == "bge" else CROSSENCODER_DEFAULT_RERANKER)
         ),
         rerank_top_k=int(ns.rerank_top_k),
         openai_api_key=str(ns.openai_api_key).strip() if ns.openai_api_key else api_key_env,
@@ -581,7 +747,38 @@ def main() -> int:
     args = parse_args()
     logger.info(f"Args: {args.to_dict()}")
 
-    embedding_function = BGEM3EmbeddingFunction()
+    dense_embedding_function: DenseEmbedder
+    sparse_embedding_function: SparseEmbedder | BGEM3EmbeddingFunction | None = None
+
+    if args.dense_embedding == "bge-m3":
+        if args.use_sparse and args.sparse_embedding == "bge-m3":
+            dense_embedding_function = BGEM3EmbeddingFunction(return_dense=True, return_sparse=True)
+            sparse_embedding_function = dense_embedding_function
+        else:
+            dense_embedding_function = BGEM3EmbeddingFunction(return_dense=True, return_sparse=False)
+    elif args.dense_embedding == "openai":
+        if not args.openai_api_key:
+            raise SystemExit(
+                "Dense OpenAI embeddings require API key: set `.env` `api_key` or env OPENAI_API_KEY or pass `--openai-api-key`."
+            )
+        dense_embedding_function = OpenAIEmbeddingFunction(
+            model_name=args.openai_embedding_model,
+            api_key=args.openai_api_key,
+            base_url=args.openai_base_url,
+            dimensions=args.openai_embedding_dimensions,
+        )
+    else:
+        raise SystemExit(f"Unknown dense embedding type: {args.dense_embedding}")
+
+    if args.use_sparse:
+        if args.sparse_embedding == "bge-m3":
+            if sparse_embedding_function is None:
+                sparse_embedding_function = BGEM3EmbeddingFunction(return_dense=False, return_sparse=True)
+        elif args.sparse_embedding == "bm25":
+            sparse_embedding_function = BM25EmbeddingFunction()
+        else:
+            raise SystemExit(f"Unknown sparse embedding type: {args.sparse_embedding}")
+
     reranker: Reranker | None = None
     if args.use_reranker:
         reranker = _build_reranker(args.reranker_type, args.reranker_model_name)
@@ -595,8 +792,9 @@ def main() -> int:
     retriever = MilvusContextualRetriever(
         uri=args.milvus_uri,
         collection_name=args.collection_name,
-        embedding_function=embedding_function,
+        dense_embedding_function=dense_embedding_function,
         use_sparse=args.use_sparse,
+        sparse_embedding_function=sparse_embedding_function,
         use_contextualize_embedding=args.use_contextualize_embedding,
         openai_client=openai_client,
         context_model=args.context_model,
@@ -617,26 +815,62 @@ def main() -> int:
     with input_path.open("r", encoding="utf-8") as f:
         dataset: list[DocumentRecord] = json.load(f)
 
+    # NOTE: we fit the BM25 corpus only once for efficiency.
+    # of course, if we are serving in an online manner, we will need to rebuild
+    # the corpus as new documents are uploaded by users...
+    if args.use_sparse and args.sparse_embedding == "bm25":
+        if not isinstance(sparse_embedding_function, BM25EmbeddingFunction):
+            raise RuntimeError("Expected BM25EmbeddingFunction for sparse embedding type 'bm25'.")
+        if args.bm25_load_path:
+            logger.info(f"Loading BM25 parameters from {args.bm25_load_path}")
+            sparse_embedding_function.load(args.bm25_load_path)
+        else:
+            logger.info("Fitting BM25 sparse embeddings on chunk corpus...")
+            corpus: list[str] = []
+            for doc in dataset:
+                for chunk in doc.get("chunks") or []:
+                    corpus.append(str(chunk.get("content") or ""))
+            sparse_embedding_function.fit(corpus)
+            logger.info(f"BM25 corpus size: {len(corpus)}")
+            if args.bm25_save_path:
+                sparse_embedding_function.save(args.bm25_save_path)
+                logger.info(f"Saved BM25 parameters to {args.bm25_save_path}")
+
     t_start = time.time()
-    for doc in dataset:
+    for doc in tqdm(dataset, desc="Inserting documents into hybrid database"):
         doc_id = str(doc.get("doc_id") or "")
         original_uuid = str(doc.get("original_uuid") or "")
         doc_content = str(doc.get("content") or "")
         chunks = doc.get("chunks") or []
 
+        # TODO: add batched embedding
         for chunk in chunks:
             chunk_content = str(chunk.get("content") or "")
+            chunk_id = str(chunk.get("chunk_id") or "")
             metadata: dict[str, Any] = {
                 "doc_id": doc_id,
                 "original_uuid": original_uuid,
-                "chunk_id": str(chunk.get("chunk_id") or ""),
+                "chunk_id": chunk_id,
                 "original_index": int(chunk.get("original_index") or 0),
                 "content": chunk_content,
             }
-            if args.use_contextualize_embedding and doc_content:
-                # TODO: if doc_content is too large (which will happen for our private dataset)
-                # we need to find a way to truncate it intelligently
-                retriever.insert_contextualized_data(doc_content, chunk_content, metadata)
+            # NOTE: we already build BM25 corpus so insert_data() doesn't need to rebuild the corpus, only encode
+            # in online serving, we need to ensure the BM25 corpus is properly rebuilt
+            if not args.use_contextualize_embedding:
+                retriever.insert_data(chunk_content, metadata)
+                continue
+
+            context_doc = ""
+            if args.context_source == "document":
+                context_doc = doc_content
+                if not context_doc.strip():
+                    logger.warning("Document `content` missing; reconstructing full doc from chunks (may be large).")
+                    context_doc = "\n\n".join(str(c.get("content") or "") for c in chunks)
+            else:
+                context_doc = _neighbor_chunks_context(chunks, chunk_id=chunk_id, window=args.neighbor_window)
+
+            if context_doc.strip():
+                retriever.insert_contextualized_data(context_doc, chunk_content, metadata)
             else:
                 retriever.insert_data(chunk_content, metadata)
 
