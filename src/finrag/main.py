@@ -25,6 +25,12 @@ from opentelemetry.trace import Status, StatusCode
 
 from finrag.chunking import DoclingHybridChunker
 from finrag.dataclasses import TopChunk
+from finrag.generation_controls import (
+    GenerationSettings,
+    default_mode,
+    list_generation_presets,
+    resolve_generation_settings,
+)
 from finrag.llm_clients import get_llm_client
 from finrag.context_support import apply_context_strategy, context_builder_from_metadata
 from finrag.qa import build_draft_prompt, build_refine_prompt
@@ -52,10 +58,15 @@ from finrag.telemetry import setup_opentelemetry
 
 class QueryRequest(BaseModel):
     question: str
-    top_k_retrieve: int = 30
-    top_k_rerank: int = 8
-    draft_max_tokens: int = 65_536
-    final_max_tokens: int = 32_768
+    mode: str | None = None
+
+    # Optional overrides (use mode preset when omitted).
+    top_k_retrieve: int | None = None
+    top_k_rerank: int | None = None
+    draft_max_tokens: int | None = None
+    final_max_tokens: int | None = None
+    enable_rerank: bool | None = None
+    enable_refine: bool | None = None
 
 
 class QueryStreamRequest(QueryRequest):
@@ -66,6 +77,31 @@ class QueryResponse(BaseModel):
     draft_answer: str
     final_answer: str
     top_chunks: list[TopChunk]
+
+
+def _resolve_generation(req: QueryRequest) -> GenerationSettings:
+    return resolve_generation_settings(
+        mode=req.mode,
+        top_k_retrieve=req.top_k_retrieve,
+        top_k_rerank=req.top_k_rerank,
+        draft_max_tokens=req.draft_max_tokens,
+        final_max_tokens=req.final_max_tokens,
+        enable_rerank=req.enable_rerank,
+        enable_refine=req.enable_refine,
+    )
+
+
+def _request_with_resolved_settings(req: QueryRequest, settings: GenerationSettings) -> QueryRequest:
+    return QueryRequest(
+        question=req.question,
+        mode=settings.mode,
+        top_k_retrieve=settings.top_k_retrieve,
+        top_k_rerank=settings.top_k_rerank,
+        draft_max_tokens=settings.draft_max_tokens,
+        final_max_tokens=settings.final_max_tokens,
+        enable_rerank=settings.enable_rerank,
+        enable_refine=settings.enable_refine,
+    )
 
 
 def _setup_logging(project_root: Path) -> Path:
@@ -398,10 +434,7 @@ class RAGService:
     def answer_question(
         self,
         question: str,
-        top_k_retrieve: int = 30,
-        top_k_rerank: int = 8,
-        draft_max_tokens: int = 65_536,
-        final_max_tokens: int = 32_768,
+        settings: GenerationSettings,
     ) -> QueryResponse:
         tracer = trace.get_tracer(__name__)
 
@@ -413,44 +446,64 @@ class RAGService:
             with tracer.start_as_current_span("finrag.retrieve") as span:
                 span.set_attribute(AISpanAttributes.VECTOR_DB_VENDOR, backend)
                 span.set_attribute(AISpanAttributes.VECTOR_DB_OPERATION, "retrieve_hybrid")
-                span.set_attribute(AISpanAttributes.VECTOR_DB_QUERY_TOP_K, int(top_k_retrieve))
+                span.set_attribute(AISpanAttributes.VECTOR_DB_QUERY_TOP_K, int(settings.top_k_retrieve))
                 hybrid = self.retriever.retrieve_hybrid(
-                    question, top_k_semantic=top_k_retrieve, top_k_bm25=top_k_retrieve, top_k_final=top_k_retrieve
+                    question,
+                    top_k_semantic=settings.top_k_retrieve,
+                    top_k_bm25=settings.top_k_retrieve,
+                    top_k_final=settings.top_k_retrieve,
                 )
                 span.set_attribute("finrag.retrieve.count", len(hybrid))
 
             with tracer.start_as_current_span("finrag.rerank") as span:
-                span.set_attribute("finrag.rerank.top_k", int(top_k_rerank))
-                reranked = self.reranker.rerank(question, hybrid, top_k=top_k_rerank)
+                span.set_attribute("finrag.rerank.enabled", bool(settings.enable_rerank))
+                span.set_attribute("finrag.rerank.top_k", int(settings.top_k_rerank))
+                if settings.enable_rerank:
+                    reranked = self.reranker.rerank(question, hybrid, top_k=settings.top_k_rerank)
+                else:
+                    reranked = hybrid[: settings.top_k_rerank]
                 span.set_attribute("finrag.rerank.count", len(reranked))
 
-            draft_prompt = build_draft_prompt(question, reranked, draft_max_tokens=draft_max_tokens)
+            draft_prompt = build_draft_prompt(
+                question,
+                reranked,
+                draft_max_tokens=settings.draft_max_tokens,
+                answer_style=settings.answer_style,
+            )
             with tracer.start_as_current_span("finrag.llm.draft") as span:
                 if system:
                     span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
                 if model:
                     span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-                span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(draft_max_tokens))
-                span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, 0.1)
+                span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(settings.draft_max_tokens))
+                span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, float(settings.draft_temperature))
                 span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
                 span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, False)
                 span.set_attribute("finrag.prompt.messages", len(draft_prompt))
-                draft = self.llm.chat(draft_prompt, temperature=0.1)  # type: ignore[arg-type]
+                draft = self.llm.chat(draft_prompt, temperature=settings.draft_temperature)  # type: ignore[arg-type]
                 span.set_attribute("finrag.draft.chars", len(draft))
 
-            refine_prompt = build_refine_prompt(question, draft, reranked, final_max_tokens=final_max_tokens)
-            with tracer.start_as_current_span("finrag.llm.final") as span:
-                if system:
-                    span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
-                if model:
-                    span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-                span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(final_max_tokens))
-                span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, 0.0)
-                span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
-                span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, False)
-                span.set_attribute("finrag.prompt.messages", len(refine_prompt))
-                final = self.llm.chat(refine_prompt, temperature=0.0)  # type: ignore[arg-type]
-                span.set_attribute("finrag.final.chars", len(final))
+            final = draft
+            if settings.enable_refine:
+                refine_prompt = build_refine_prompt(
+                    question,
+                    draft,
+                    reranked,
+                    final_max_tokens=settings.final_max_tokens,
+                    answer_style=settings.answer_style,
+                )
+                with tracer.start_as_current_span("finrag.llm.final") as span:
+                    if system:
+                        span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
+                    if model:
+                        span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
+                    span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(settings.final_max_tokens))
+                    span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, 0.0)
+                    span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
+                    span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, False)
+                    span.set_attribute("finrag.prompt.messages", len(refine_prompt))
+                    final = self.llm.chat(refine_prompt, temperature=0.0)  # type: ignore[arg-type]
+                    span.set_attribute("finrag.final.chars", len(final))
 
             return QueryResponse(
                 draft_answer=draft, final_answer=final, top_chunks=self._serialize_top_chunks(reranked)
@@ -522,6 +575,14 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/generation_presets")
+def generation_presets():
+    return {
+        "default_mode": default_mode(),
+        "presets": [p.to_public_dict() for p in list_generation_presets()],
+    }
+
+
 @app.post("/ingest")
 async def ingest_pdf(file: UploadFile = File(...), use_mistral_ocr: bool = Form(False)):
     # Save uploaded file to a temp path
@@ -549,29 +610,30 @@ async def ingest_pdf(file: UploadFile = File(...), use_mistral_ocr: bool = Form(
 @app.post("/query")
 async def query_docs(req: QueryRequest):
     # TODO: explore adding support for multi-turn Q&A
+    settings = _resolve_generation(req)
+    req_resolved = _request_with_resolved_settings(req, settings)
+
     span = trace.get_current_span()
     if span.is_recording():
         span.set_attribute("finrag.request.question.len", len((req.question or "").strip()))
         span.set_attribute("finrag.request.question.fp", _question_fingerprint(req.question))
         _maybe_set_otel_question(span, req.question)
-        span.set_attribute("finrag.query.top_k_retrieve", int(req.top_k_retrieve))
-        span.set_attribute("finrag.query.top_k_rerank", int(req.top_k_rerank))
-        span.set_attribute("finrag.query.draft_max_tokens", int(req.draft_max_tokens))
-        span.set_attribute("finrag.query.final_max_tokens", int(req.final_max_tokens))
+        span.set_attribute("finrag.query.mode", settings.mode)
+        span.set_attribute("finrag.query.enable_rerank", bool(settings.enable_rerank))
+        span.set_attribute("finrag.query.enable_refine", bool(settings.enable_refine))
+        span.set_attribute("finrag.query.answer_style", settings.answer_style)
+        span.set_attribute("finrag.query.top_k_retrieve", int(settings.top_k_retrieve))
+        span.set_attribute("finrag.query.top_k_rerank", int(settings.top_k_rerank))
+        span.set_attribute("finrag.query.draft_max_tokens", int(settings.draft_max_tokens))
+        span.set_attribute("finrag.query.final_max_tokens", int(settings.final_max_tokens))
         if system := _genai_system():
             span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
         if model := _llm_chat_model():
             span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
 
     try:
-        result = rag_service.answer_question(
-            question=req.question,
-            top_k_retrieve=req.top_k_retrieve,
-            top_k_rerank=req.top_k_rerank,
-            draft_max_tokens=req.draft_max_tokens,
-            final_max_tokens=req.final_max_tokens,
-        )
-        _append_history(req=req, res=result)
+        result = rag_service.answer_question(question=req.question, settings=settings)
+        _append_history(req=req_resolved, res=result)
         return result
     except Exception as exc:  # noqa: BLE001
         if span.is_recording():
@@ -608,6 +670,9 @@ def cancel(req: CancelRequest):
 @app.post("/query_stream")
 async def query_docs_stream(req: QueryStreamRequest, request: Request):
     request_id = (req.request_id or "").strip() or str(uuid.uuid4())
+    base_req = QueryRequest(**req.dict(exclude={"request_id"}))
+    settings = _resolve_generation(base_req)
+    req_resolved = _request_with_resolved_settings(base_req, settings)
     cancel_evt = _register_cancel_event(request_id)
     started_ms = int(time.time() * 1000)
     parent_ctx = otel_context.get_current()
@@ -643,10 +708,14 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 span.set_attribute("finrag.request.question.len", len((req.question or "").strip()))
                 span.set_attribute("finrag.request.question.fp", _question_fingerprint(req.question))
                 _maybe_set_otel_question(span, req.question)
-                span.set_attribute("finrag.query.top_k_retrieve", int(req.top_k_retrieve))
-                span.set_attribute("finrag.query.top_k_rerank", int(req.top_k_rerank))
-                span.set_attribute("finrag.query.draft_max_tokens", int(req.draft_max_tokens))
-                span.set_attribute("finrag.query.final_max_tokens", int(req.final_max_tokens))
+                span.set_attribute("finrag.query.mode", settings.mode)
+                span.set_attribute("finrag.query.enable_rerank", bool(settings.enable_rerank))
+                span.set_attribute("finrag.query.enable_refine", bool(settings.enable_refine))
+                span.set_attribute("finrag.query.answer_style", settings.answer_style)
+                span.set_attribute("finrag.query.top_k_retrieve", int(settings.top_k_retrieve))
+                span.set_attribute("finrag.query.top_k_rerank", int(settings.top_k_rerank))
+                span.set_attribute("finrag.query.draft_max_tokens", int(settings.draft_max_tokens))
+                span.set_attribute("finrag.query.final_max_tokens", int(settings.final_max_tokens))
                 span.set_attribute("finrag.stream.preview_chars", int(preview_chars))
                 span.set_attribute("finrag.stream.text_chars", int(text_chars))
                 span.set_attribute("finrag.stream.max_chunks", int(max_chunks))
@@ -662,13 +731,13 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 backend = "milvus" if isinstance(rag_service.retriever, MilvusContextualRetriever) else "qdrant"
                 step_span.set_attribute(AISpanAttributes.VECTOR_DB_VENDOR, backend)
                 step_span.set_attribute(AISpanAttributes.VECTOR_DB_OPERATION, "retrieve_hybrid")
-                step_span.set_attribute(AISpanAttributes.VECTOR_DB_QUERY_TOP_K, int(req.top_k_retrieve))
+                step_span.set_attribute(AISpanAttributes.VECTOR_DB_QUERY_TOP_K, int(settings.top_k_retrieve))
                 hybrid = await asyncio.to_thread(
                     rag_service.retriever.retrieve_hybrid,
                     req.question,
-                    top_k_semantic=req.top_k_retrieve,
-                    top_k_bm25=req.top_k_retrieve,
-                    top_k_final=req.top_k_retrieve,
+                    top_k_semantic=settings.top_k_retrieve,
+                    top_k_bm25=settings.top_k_retrieve,
+                    top_k_final=settings.top_k_retrieve,
                 )
                 step_span.set_attribute("finrag.retrieve.count", len(hybrid))
 
@@ -686,12 +755,22 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 retrieved_payload = retrieved_payload[:max_chunks]
             yield ndjson_bytes({"type": "retrieved", "count": len(hybrid), "chunks": retrieved_payload})
 
-            yield ndjson_bytes({"type": "status", "step": "rerank", "message": "Reranking chunks…"})
+            yield ndjson_bytes(
+                {
+                    "type": "status",
+                    "step": "rerank",
+                    "message": ("Reranking chunks…" if settings.enable_rerank else "Skipping rerank (mode preset)…"),
+                }
+            )
             with tracer.start_as_current_span("finrag.rerank") as step_span:
-                step_span.set_attribute("finrag.rerank.top_k", int(req.top_k_rerank))
-                reranked = await asyncio.to_thread(
-                    rag_service.reranker.rerank, req.question, hybrid, top_k=req.top_k_rerank
-                )
+                step_span.set_attribute("finrag.rerank.enabled", bool(settings.enable_rerank))
+                step_span.set_attribute("finrag.rerank.top_k", int(settings.top_k_rerank))
+                if settings.enable_rerank:
+                    reranked = await asyncio.to_thread(
+                        rag_service.reranker.rerank, req.question, hybrid, top_k=settings.top_k_rerank
+                    )
+                else:
+                    reranked = hybrid[: settings.top_k_rerank]
                 step_span.set_attribute("finrag.rerank.count", len(reranked))
 
             if await request.is_disconnected():
@@ -706,27 +785,102 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
             ]
             yield ndjson_bytes({"type": "reranked", "count": len(reranked), "chunks": reranked_payload})
 
-            yield ndjson_bytes({"type": "status", "step": "draft", "message": "Generating draft…", "is_draft": True})
-            draft_prompt = build_draft_prompt(req.question, reranked, draft_max_tokens=req.draft_max_tokens)
-            with tracer.start_as_current_span("finrag.llm.draft_stream") as step_span:
-                if system := _genai_system():
-                    step_span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
-                if model := _llm_chat_model():
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-                step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(req.draft_max_tokens))
-                step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, 0.1)
-                step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
-                step_span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, bool(stream_draft_enabled()))
-                step_span.set_attribute("finrag.prompt.messages", len(draft_prompt))
-                first_delta_ms: int | None = None
-                t0 = time.monotonic()
+            if settings.enable_refine:
+                yield ndjson_bytes(
+                    {"type": "status", "step": "draft", "message": "Generating draft…", "is_draft": True}
+                )
+                draft_prompt = build_draft_prompt(
+                    req.question,
+                    reranked,
+                    draft_max_tokens=settings.draft_max_tokens,
+                    answer_style=settings.answer_style,
+                )
+                with tracer.start_as_current_span("finrag.llm.draft_stream") as step_span:
+                    if system := _genai_system():
+                        step_span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
+                    if model := _llm_chat_model():
+                        step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
+                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(settings.draft_max_tokens))
+                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, float(settings.draft_temperature))
+                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
+                    step_span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, bool(stream_draft_enabled()))
+                    step_span.set_attribute("finrag.prompt.messages", len(draft_prompt))
+                    first_delta_ms: int | None = None
+                    t0 = time.monotonic()
 
-                if stream_draft_enabled():
+                    if stream_draft_enabled():
+                        batcher = TextDeltaBatcher.from_env()
+                        async for delta in iter_chat_deltas(
+                            rag_service.llm,
+                            draft_prompt,  # type: ignore[arg-type]
+                            temperature=settings.draft_temperature,
+                            is_cancelled=is_cancelled,
+                            set_cancelled=set_cancelled,
+                            is_disconnected=request.is_disconnected,
+                        ):
+                            if first_delta_ms is None and delta:
+                                first_delta_ms = int((time.monotonic() - t0) * 1000)
+                                step_span.add_event("finrag.first_delta", {"finrag.ms": first_delta_ms})
+                            full_draft += delta
+                            batcher.add(delta)
+                            out = batcher.pop_ready()
+                            if out:
+                                yield ndjson_bytes({"type": "draft_delta", "delta": out})
+                            if is_cancelled():
+                                break
+                        out = batcher.pop_all()
+                        if out:
+                            yield ndjson_bytes({"type": "draft_delta", "delta": out})
+                    else:
+                        full_draft = await asyncio.to_thread(
+                            rag_service.llm.chat, draft_prompt, settings.draft_temperature
+                        )
+
+                    step_span.set_attribute("finrag.draft.chars", len(full_draft))
+
+                yield ndjson_bytes({"type": "draft_done", "chars": len(full_draft)})
+
+                if await request.is_disconnected():
+                    set_cancelled()
+                if is_cancelled():
+                    cancelled = True
+                    yield ndjson_bytes(
+                        {
+                            "type": "cancelled",
+                            "request_id": request_id,
+                            "elapsed_ms": int(time.time() * 1000) - started_ms,
+                        }
+                    )
+                    return
+
+                yield ndjson_bytes(
+                    {"type": "status", "step": "final", "message": "Generating final answer…", "is_draft": False}
+                )
+                refine_prompt = build_refine_prompt(
+                    req.question,
+                    full_draft,
+                    reranked,
+                    final_max_tokens=settings.final_max_tokens,
+                    answer_style=settings.answer_style,
+                )
+                with tracer.start_as_current_span("finrag.llm.final_stream") as step_span:
+                    if system := _genai_system():
+                        step_span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
+                    if model := _llm_chat_model():
+                        step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
+                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(settings.final_max_tokens))
+                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, 0.0)
+                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
+                    step_span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, True)
+                    step_span.set_attribute("finrag.prompt.messages", len(refine_prompt))
+                    first_delta_ms: int | None = None
+                    t0 = time.monotonic()
+
                     batcher = TextDeltaBatcher.from_env()
                     async for delta in iter_chat_deltas(
                         rag_service.llm,
-                        draft_prompt,  # type: ignore[arg-type]
-                        temperature=0.1,
+                        refine_prompt,  # type: ignore[arg-type]
+                        temperature=0.0,
                         is_cancelled=is_cancelled,
                         set_cancelled=set_cancelled,
                         is_disconnected=request.is_disconnected,
@@ -734,74 +888,57 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                         if first_delta_ms is None and delta:
                             first_delta_ms = int((time.monotonic() - t0) * 1000)
                             step_span.add_event("finrag.first_delta", {"finrag.ms": first_delta_ms})
-                        full_draft += delta
+                        full_final += delta
                         batcher.add(delta)
                         out = batcher.pop_ready()
                         if out:
-                            yield ndjson_bytes({"type": "draft_delta", "delta": out})
+                            yield ndjson_bytes({"type": "final_delta", "delta": out})
                         if is_cancelled():
                             break
                     out = batcher.pop_all()
                     if out:
-                        yield ndjson_bytes({"type": "draft_delta", "delta": out})
-                else:
-                    full_draft = await asyncio.to_thread(rag_service.llm.chat, draft_prompt, 0.1)
-
-                step_span.set_attribute("finrag.draft.chars", len(full_draft))
-
-            yield ndjson_bytes({"type": "draft_done", "chars": len(full_draft)})
-
-            if await request.is_disconnected():
-                set_cancelled()
-            if is_cancelled():
-                cancelled = True
-                yield ndjson_bytes(
-                    {"type": "cancelled", "request_id": request_id, "elapsed_ms": int(time.time() * 1000) - started_ms}
+                        yield ndjson_bytes({"type": "final_delta", "delta": out})
+                    step_span.set_attribute("finrag.final.chars", len(full_final))
+            else:
+                yield ndjson_bytes({"type": "status", "step": "final", "message": "Generating answer…"})
+                answer_prompt = build_draft_prompt(
+                    req.question,
+                    reranked,
+                    draft_max_tokens=settings.draft_max_tokens,
+                    answer_style=settings.answer_style,
                 )
-                return
+                with tracer.start_as_current_span("finrag.llm.answer_stream") as step_span:
+                    if system := _genai_system():
+                        step_span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
+                    if model := _llm_chat_model():
+                        step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
+                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(settings.draft_max_tokens))
+                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, float(settings.draft_temperature))
+                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
+                    step_span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, True)
+                    step_span.set_attribute("finrag.prompt.messages", len(answer_prompt))
 
-            yield ndjson_bytes(
-                {"type": "status", "step": "final", "message": "Generating final answer…", "is_draft": False}
-            )
-            refine_prompt = build_refine_prompt(
-                req.question, full_draft, reranked, final_max_tokens=req.final_max_tokens
-            )
-            with tracer.start_as_current_span("finrag.llm.final_stream") as step_span:
-                if system := _genai_system():
-                    step_span.set_attribute(AISpanAttributes.LLM_SYSTEM, system)
-                if model := _llm_chat_model():
-                    step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MODEL, model)
-                step_span.set_attribute(AISpanAttributes.LLM_REQUEST_MAX_TOKENS, int(req.final_max_tokens))
-                step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TEMPERATURE, 0.0)
-                step_span.set_attribute(AISpanAttributes.LLM_REQUEST_TYPE, "chat")
-                step_span.set_attribute(AISpanAttributes.LLM_IS_STREAMING, True)
-                step_span.set_attribute("finrag.prompt.messages", len(refine_prompt))
-                first_delta_ms: int | None = None
-                t0 = time.monotonic()
-
-                batcher = TextDeltaBatcher.from_env()
-                async for delta in iter_chat_deltas(
-                    rag_service.llm,
-                    refine_prompt,  # type: ignore[arg-type]
-                    temperature=0.0,
-                    is_cancelled=is_cancelled,
-                    set_cancelled=set_cancelled,
-                    is_disconnected=request.is_disconnected,
-                ):
-                    if first_delta_ms is None and delta:
-                        first_delta_ms = int((time.monotonic() - t0) * 1000)
-                        step_span.add_event("finrag.first_delta", {"finrag.ms": first_delta_ms})
-                    full_final += delta
-                    batcher.add(delta)
-                    out = batcher.pop_ready()
+                    batcher = TextDeltaBatcher.from_env()
+                    async for delta in iter_chat_deltas(
+                        rag_service.llm,
+                        answer_prompt,  # type: ignore[arg-type]
+                        temperature=settings.draft_temperature,
+                        is_cancelled=is_cancelled,
+                        set_cancelled=set_cancelled,
+                        is_disconnected=request.is_disconnected,
+                    ):
+                        full_final += delta
+                        batcher.add(delta)
+                        out = batcher.pop_ready()
+                        if out:
+                            yield ndjson_bytes({"type": "final_delta", "delta": out})
+                        if is_cancelled():
+                            break
+                    out = batcher.pop_all()
                     if out:
                         yield ndjson_bytes({"type": "final_delta", "delta": out})
-                    if is_cancelled():
-                        break
-                out = batcher.pop_all()
-                if out:
-                    yield ndjson_bytes({"type": "final_delta", "delta": out})
-                step_span.set_attribute("finrag.final.chars", len(full_final))
+                    step_span.set_attribute("finrag.final.chars", len(full_final))
+                full_draft = full_final
 
             if await request.is_disconnected():
                 set_cancelled()
@@ -819,9 +956,11 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 return
 
             res = QueryResponse(
-                draft_answer=full_draft, final_answer=full_final, top_chunks=rag_service._serialize_top_chunks(reranked)
+                draft_answer=full_draft,
+                final_answer=(full_final if full_final else full_draft),
+                top_chunks=rag_service._serialize_top_chunks(reranked),
             )
-            _append_history(req=QueryRequest(**req.dict(exclude={"request_id"})), res=res)
+            _append_history(req=req_resolved, res=res)
 
             yield ndjson_bytes(
                 {
