@@ -1,3 +1,4 @@
+import os
 from typing import Sequence
 
 from finrag.dataclasses import ScoredChunk
@@ -20,12 +21,20 @@ def build_context(chunks: Sequence[ScoredChunk], max_tokens: int) -> str:
     budget_chars = max_tokens * 4
     parts: list[str] = []
     used = 0
+    context_key = os.getenv("CONTEXT_METADATA_KEY", "context").strip() or "context"
     for sc in chunks:
-        meta = f"[doc={sc.chunk.doc_id} page={sc.chunk.page_no} headings={'; '.join(sc.chunk.headings)}]"
-        text = sc.chunk.text.strip()
-        summary = (sc.chunk.metadata or {}).get("summary")
-        if summary:
-            block = f"{meta}\nSummary: {summary}\n{text}\n"
+        headings_s = "; ".join(sc.chunk.headings)
+        meta_bits = [f"doc={sc.chunk.doc_id}"]
+        if sc.chunk.page_no not in (None, ""):
+            meta_bits.append(f"page={sc.chunk.page_no}")
+        meta_bits.append(f"headings={headings_s}")
+        meta = "[" + " ".join(meta_bits) + "]"
+
+        meta_dict = sc.chunk.metadata or {}
+        text = (meta_dict.get("index_text") or sc.chunk.text or "").strip()
+        context = str(meta_dict.get(context_key) or "").strip()
+        if context:
+            block = f"{meta}\n{text}\n\nContext:\n{context}\n"
         else:
             block = f"{meta}\n{text}\n"
         if used + len(block) > budget_chars:
