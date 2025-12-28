@@ -706,6 +706,7 @@ def extract_year_from_filename(html_path: Path) -> int | None:
 
 
 def init_worker(config: dict, gpu_ids: list[str]) -> None:
+    register_langsmith_flush()
     if gpu_ids:
         worker_index = get_worker_index()
         gpu_id = gpu_ids[(worker_index - 1) % len(gpu_ids)]
@@ -738,6 +739,33 @@ def get_worker_pipeline() -> tuple[PdfConverter, MarkdownRenderer, dict]:
     if _worker_converter is None or _worker_markdown_renderer is None or _worker_renderer_config is None:
         raise RuntimeError("Worker pipeline has not been initialized")
     return _worker_converter, _worker_markdown_renderer, _worker_renderer_config
+
+
+def flush_langsmith_traces() -> None:
+    if os.environ.get("LANGSMITH_TRACING", "false").lower() != "true":
+        return
+    try:
+        from langsmith import Client
+    except Exception as exc:  # noqa: BLE001 - best effort
+        logger.warning(f"LangSmith client not available for flush: {exc}")
+        return
+    try:
+        Client().flush()
+        logger.info("Flushed LangSmith traces")
+    except Exception as exc:  # noqa: BLE001 - best effort
+        logger.warning(f"LangSmith flush failed: {exc}")
+
+
+def register_langsmith_flush() -> None:
+    global _langsmith_flush_registered
+    if _langsmith_flush_registered:
+        return
+
+    def _flush_langsmith() -> None:
+        flush_langsmith_traces()
+
+    atexit.register(_flush_langsmith)
+    _langsmith_flush_registered = True
 
 
 def get_pdf_page_count(pdf_path: Path) -> int:
@@ -1121,6 +1149,7 @@ def process_one(
 
 
 def main():
+    register_langsmith_flush()
     args = parse_args()
     logger.info(f"Starting processing with args: {args}")
 
@@ -1257,6 +1286,7 @@ def main():
         args_dict = args.to_dict()
         for html_file_path in tqdm(html_paths, desc="Processing HTML files", unit="file"):
             process_one(html_file_path, html_dir, pdf_root, md_root, debug_root, args_dict)
+        flush_langsmith_traces()
         return
 
     args_dict = args.to_dict()
@@ -1280,6 +1310,8 @@ def main():
 
     if failures:
         raise RuntimeError(f"Failed to process {len(failures)} files; see logs for details.")
+
+    flush_langsmith_traces()
 
 
 if __name__ == "__main__":
