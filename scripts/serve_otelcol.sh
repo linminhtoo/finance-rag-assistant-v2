@@ -33,7 +33,8 @@ fi
 now=$(date +"%Y%m%d_%H%M%S")
 mkdir -p "$project_root/logs"
 "$otelcol_bin" --config "$otelcol_config" \
-  2>&1 | tee "$project_root/logs/otelcol_ingest_html_to_markdown.$now.log"
+2>&1 | tee "$project_root/logs/otelcol_app.$now.log"
+  # 2>&1 | tee "$project_root/logs/otelcol_ingest_html_to_markdown.$now.log"
 
 # check:
 # curl -s -X POST http://127.0.0.1:4318/v1/traces \

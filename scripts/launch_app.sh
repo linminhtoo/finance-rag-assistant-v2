@@ -18,4 +18,15 @@ export BM25_PATH="/home/mlin/repos/z_scratch/financial-rag/data/sec_filings_md_v
 
 # optionally set HISTORY_PATH / DISABLE_HISTORY=true / SOURCE_ROOTS
 
+# new env vars
+# FINRAG_STREAM_FLUSH_TOKENS (default 24), FINRAG_STREAM_FLUSH_CHARS (default 120), FINRAG_STREAM_FLUSH_INTERVAL_MS (default 120)
+# FINRAG_STREAM_DRAFT (1/0, default 1)
+# FINRAG_STREAM_CHUNKS_PREVIEW_CHARS (default 260), FINRAG_STREAM_CHUNKS_TEXT_CHARS (default 1000), FINRAG_STREAM_CHUNKS_MAX (default 30)
+
+# FINRAG_OTEL_ENABLED=true|false (defaults to on when OTEL_EXPORTER_OTLP_ENDPOINT is set)
+# FINRAG_OTEL_CONSOLE=true to also print spans to stdout
+# FINRAG_OTEL_INCLUDE_QUESTION=false to exclude tracking questions (will only track length + fingerprint)
+export FINRAG_OTEL_CONSOLE=true
+
+source /home/mlin/repos/z_scratch/financial-rag/.venv/bin/activate
 PYTHONPATH=src uvicorn finrag.main:app --host 0.0.0.0 --port 8234 --reload
