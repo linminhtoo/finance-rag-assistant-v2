@@ -1132,14 +1132,68 @@ def _read_history(*, limit: int = 50, summary: bool = False) -> list[dict]:
             payload = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(payload, dict):
+        if not isinstance(payload, dict):
+            continue
+        if not summary:
             out.append(payload)
+            continue
+
+        # Keep the list lightweight for the UI: omit large answer text and chunks.
+        req_raw = payload.get("request")
+        req: dict[str, object] = req_raw if isinstance(req_raw, dict) else {}
+
+        res_raw = payload.get("response")
+        res: dict[str, object] = res_raw if isinstance(res_raw, dict) else {}
+
+        top_chunks_raw = res.get("top_chunks")
+        top_chunks: list[object] = top_chunks_raw if isinstance(top_chunks_raw, list) else []
+
+        out.append(
+            {
+                "id": payload.get("id"),
+                "created_at": payload.get("created_at"),
+                "request": {
+                    "question": req.get("question"),
+                    "mode": req.get("mode"),
+                },
+                "response": {
+                    "top_chunks_count": len(top_chunks),
+                },
+            }
+        )
     return out
 
 
 @app.get("/history")
-def history(limit: int = 50):
-    return {"items": _read_history(limit=limit), "path": str(_history_path())}
+def history(limit: int = 50, summary: bool = False):
+    return {"items": _read_history(limit=limit, summary=summary), "path": str(_history_path())}
+
+
+@app.get("/history_entry")
+def history_entry(id: str = Query(..., description="History entry id")):
+    want = (id or "").strip()
+    if not want:
+        raise HTTPException(status_code=400, detail="Missing `id`")
+
+    path = _history_path()
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="History file not found")
+
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            lines = [ln for ln in (line.strip() for line in f) if ln]
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Failed to read history: {exc}") from exc
+
+    for line in reversed(lines):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict) and str(payload.get("id") or "") == want:
+            return payload
+
+    raise HTTPException(status_code=404, detail="History entry not found")
 
 
 @app.delete("/history")
