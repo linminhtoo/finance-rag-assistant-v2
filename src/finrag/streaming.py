@@ -129,6 +129,7 @@ async def iter_chat_deltas(
 
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[str | BaseException | None] = asyncio.Queue()
+    saw_eos = False
 
     def worker() -> None:
         try:
@@ -151,6 +152,7 @@ async def iter_chat_deltas(
 
             item = await queue.get()
             if item is None:
+                saw_eos = True
                 break
             if isinstance(item, BaseException):
                 raise item
@@ -159,7 +161,10 @@ async def iter_chat_deltas(
             if is_cancelled():
                 break
     finally:
-        set_cancelled()
+        # Only signal cancellation if the consumer is stopping early; avoid
+        # marking normal completion as "cancelled".
+        if not saw_eos and not thread_task.done() and not is_cancelled():
+            set_cancelled()
         try:
             await asyncio.wait_for(thread_task, timeout=1.0)
         except Exception:
