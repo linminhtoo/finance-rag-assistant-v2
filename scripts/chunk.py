@@ -107,7 +107,7 @@ def parse_args() -> Args:
         help="HuggingFace tokenizer model used by Docling hybrid chunker.",
     )
     parser.add_argument("--max-tokens", type=int, default=1024, help="Max tokens per chunk (approx).")
-    parser.add_argument("--overlap-tokens", type=int, default=64, help="Overlap tokens between chunks.")
+    parser.add_argument("--overlap-tokens", type=int, default=128, help="Overlap tokens between chunks.")
 
     md_table_group = parser.add_mutually_exclusive_group()
     md_table_group.add_argument(
@@ -220,7 +220,7 @@ def _setup_logging(project_root: Path) -> Path:
     logs_dir = project_root / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%S")
-    log_path = logs_dir / f"ingest_{ts}.log"
+    log_path = logs_dir / f"chunk_{ts}.log"
 
     logger.remove()
     logger.add(sys.stderr, level="INFO")
