@@ -60,6 +60,7 @@ class MistralClientWrapper:
             model=self.chat_model, messages=mistral_messages, temperature=temperature
         )
         for evt in stream:
+            content = None
             try:
                 content = evt.data.choices[0].delta.content  # type: ignore[attr-defined]
             except Exception:

@@ -309,6 +309,41 @@ class RAGService:
         self.chunker_ocr = DoclingHybridChunker(use_mistral_ocr=True)
         self.chunker_pdf = DoclingHybridChunker(use_mistral_ocr=False)
 
+    @staticmethod
+    def _chunk_metadata_for_ui(meta: dict | None) -> dict | None:
+        if not isinstance(meta, dict):
+            return None
+
+        def _is_json_scalar(v):
+            return v is None or isinstance(v, (str, int, float, bool))
+
+        out: dict[str, object] = {}
+
+        doc = meta.get("doc")
+        if isinstance(doc, dict):
+            keep = {}
+            for k in (
+                "company",
+                "ticker",
+                "cik",
+                "filing_type",
+                "filing_date",
+                "period_end_date",
+                "filing_quarter",
+                "filing_quarter_basis",
+            ):
+                v = doc.get(k)
+                if _is_json_scalar(v):
+                    keep[k] = v
+            if keep:
+                out["doc"] = keep
+
+        summary = meta.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            out["summary"] = summary.strip()
+
+        return out or None
+
     def _serialize_top_chunks(self, reranked) -> list[TopChunk]:
         return [
             TopChunk(
@@ -325,6 +360,7 @@ class RAGService:
                     if (sc.chunk.metadata or {}).get(self._context_key) is not None
                     else None
                 ),
+                metadata=self._chunk_metadata_for_ui(sc.chunk.metadata),
             )
             for sc in reranked
         ]
@@ -557,6 +593,7 @@ def _stream_chunk_dict(sc, *, preview_chars: int, text_chars: int) -> dict:
         "preview": preview,
         "source": sc.chunk.source,
         "text": chunk_text,
+        "metadata": RAGService._chunk_metadata_for_ui(sc.chunk.metadata),
     }
 
 
@@ -566,6 +603,8 @@ def cancel(req: CancelRequest):
     return {"status": "ok" if ok else "not_found"}
 
 
+# TODO: duplicate logic with non-streaming / rethink structure
+# everytime we make a change to the answering logic, we need to update both places, not good
 @app.post("/query_stream")
 async def query_docs_stream(req: QueryStreamRequest, request: Request):
     request_id = (req.request_id or "").strip() or str(uuid.uuid4())
