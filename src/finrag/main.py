@@ -335,6 +335,11 @@ class RAGService:
 # FastAPI wiring
 # -------------------------------------------------------------------
 
+project_root = Path(__file__).resolve().parents[2]
+log_path = _setup_logging(project_root)
+logger.debug("Project root: %s", project_root)
+logger.info("Starting RAG service; logs at: %s", log_path)
+
 app = FastAPI(title="RAG Demo (Mistral + Docling + Qdrant)")
 
 app.add_middleware(
@@ -345,8 +350,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# TODO: add Langsmith tracing
-rag_service = RAGService(storage_path=get_env_var("QDRANT_STORAGE_PATH"))
+rag_service = RAGService(storage_path=os.getenv("QDRANT_STORAGE_PATH"))
 
 
 @app.get("/health")
@@ -380,10 +384,166 @@ async def ingest_pdf(file: UploadFile = File(...), use_mistral_ocr: bool = Form(
 
 @app.post("/query")
 async def query_docs(req: QueryRequest):
+    # TODO: explore adding support for multi-turn Q&A
     result = rag_service.answer_question(
-        question=req.question, top_k_retrieve=req.top_k_retrieve, top_k_rerank=req.top_k_rerank
+        question=req.question,
+        top_k_retrieve=req.top_k_retrieve,
+        top_k_rerank=req.top_k_rerank,
+        draft_max_tokens=req.draft_max_tokens,
+        final_max_tokens=req.final_max_tokens,
     )
+    _append_history(req=req, res=result)
     return result
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _source_roots() -> list[Path]:
+    raw = os.getenv("SOURCE_ROOTS")
+    if raw:
+        parts = [p.strip() for p in raw.split(os.pathsep) if p.strip()]
+        return [Path(p).expanduser().resolve() for p in parts]
+    root = _project_root()
+    return [root, root / "data"]
+
+
+def _resolve_local_source(path: str) -> Path:
+    path = (path or "").strip()
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing `path`")
+
+    p = Path(os.path.expanduser(path))
+    if not p.is_absolute():
+        p = (_project_root() / p).resolve()
+    else:
+        p = p.resolve()
+
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {p}")
+
+    allowed = _source_roots()
+    if not any(p == root or p.is_relative_to(root) for root in allowed):
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Path is outside SOURCE_ROOTS; set SOURCE_ROOTS to a colon-separated allowlist of directories."
+            ),
+        )
+
+    return p
+
+
+@app.get("/source")
+def get_source(path: str = Query(..., description="Local file path or URL")):
+    path = (path or "").strip()
+    if path.startswith(("http://", "https://")):
+        return RedirectResponse(url=path)
+    p = _resolve_local_source(path)
+    media_type, _enc = mimetypes.guess_type(str(p))
+    return FileResponse(
+        path=p,
+        media_type=media_type or "application/octet-stream",
+        filename=p.name,
+        content_disposition_type="inline",
+    )
+
+
+def _read_text_file(path: Path, *, max_bytes: int) -> str:
+    if max_bytes <= 0:
+        raise HTTPException(status_code=400, detail="SOURCE_TEXT_MAX_BYTES must be > 0")
+    size = path.stat().st_size
+    if size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"File too large ({size} bytes); max is {max_bytes} bytes")
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="replace")
+
+
+@app.get("/source_text")
+def get_source_text(path: str = Query(..., description="Local markdown/text file path")):
+    p = _resolve_local_source(path)
+    suffix = p.suffix.lower()
+    if suffix not in {".md", ".markdown", ".txt"}:
+        raise HTTPException(status_code=415, detail="Only .md/.markdown/.txt are supported for inline text viewing")
+
+    max_bytes_raw = os.getenv("SOURCE_TEXT_MAX_BYTES", "5000000").strip()
+    try:
+        max_bytes = int(max_bytes_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="SOURCE_TEXT_MAX_BYTES must be an integer") from exc
+
+    return {"path": str(p), "text": _read_text_file(p, max_bytes=max_bytes)}
+
+
+class HistoryEntry(BaseModel):
+    id: str
+    created_at: str
+    request: QueryRequest
+    response: QueryResponse
+
+
+def _history_path() -> Path:
+    raw = os.getenv("HISTORY_PATH")
+    if raw and raw.strip():
+        return Path(os.path.expanduser(raw.strip())).resolve()
+    return (_project_root() / "data" / "qa_history.jsonl").resolve()
+
+
+def _append_history(*, req: QueryRequest, res: QueryResponse) -> None:
+    if _env_bool("DISABLE_HISTORY", default=False):
+        return
+    entry = HistoryEntry(
+        id=str(uuid.uuid4()),
+        created_at=datetime.now(timezone.utc).isoformat(),
+        request=req,
+        response=res,
+    )
+    path = _history_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(jsonable_encoder(entry), ensure_ascii=False) + "\n")
+    except Exception as exc:  # noqa: BLE001 - history should never break /query
+        logger.warning("Failed to write history to %s: %r", path, exc)
+
+
+def _read_history(*, limit: int = 50) -> list[dict]:
+    limit = max(0, int(limit))
+    path = _history_path()
+    if limit == 0 or not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            lines = [ln for ln in (line.strip() for line in f) if ln]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to read history from %s: %r", path, exc)
+        return []
+
+    out: list[dict] = []
+    for line in reversed(lines[-limit:]):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            out.append(payload)
+    return out
+
+
+@app.get("/history")
+def history(limit: int = 50):
+    return {"items": _read_history(limit=limit), "path": str(_history_path())}
+
+
+@app.delete("/history")
+def clear_history():
+    path = _history_path()
+    if path.exists():
+        path.unlink()
+    return {"status": "ok", "path": str(path)}
 
 
 # -------------------------------------------------------------------
@@ -391,10 +551,9 @@ async def query_docs(req: QueryRequest):
 # -------------------------------------------------------------------
 
 HTML_PATH = Path(__file__).parent / "static" / "index.html"
-with open(HTML_PATH, "r") as f:
-    HTML_PAGE = f.read()
 
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return HTML_PAGE
+    # Read on request so frontend edits don't require a server restart.
+    return HTML_PATH.read_text(encoding="utf-8")
