@@ -40,8 +40,8 @@ def answer_question_two_stage(
     question: str,
     reranked: Sequence[ScoredChunk],
     *,
-    draft_max_tokens: int = 900,
-    final_max_tokens: int = 1500,
+    draft_max_tokens: int = 65_536,
+    final_max_tokens: int = 32_768,
     temperature_draft: float = 0.1,
 ) -> tuple[str, str]:
     ctx1 = build_context(reranked, max_tokens=draft_max_tokens)
