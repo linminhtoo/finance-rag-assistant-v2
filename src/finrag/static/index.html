@@ -640,27 +640,13 @@
       return raw;
     }
 
-    // FIXME: this is wrong, docID is just a UUID, it never contins ticker/year/form info
-    function guessCitationLabelFromDocId(docId) {
-      const s = String(docId || '').trim();
-      if (!s) return '{? ? ?]';
-      const upper = s.toUpperCase();
-
-      const ticker = upper.match(/^[A-Z]{1,6}(?=[_-])/ )?.[0] || upper.match(/\b[A-Z]{1,6}\b/)?.[0] || '?';
-      const year = upper.match(/\b(20\d{2})\b/)?.[1] || upper.match(/(20\d{2})/)?.[1] || '';
-      const quarter = upper.match(/\bQ([1-4])\b/)?.[1] || upper.match(/Q([1-4])/)?.[1] || '';
-      const yq = (year && quarter) ? `${year} Q${quarter}` : (year || '?');
-      const form = upper.includes('10') && upper.includes('Q') ? '10Q' : (upper.includes('10') && upper.includes('K') ? '10K' : '?');
-      return `[${ticker} ${yq} ${form}]`;
-    }
-
     function formatCitationLabelFromChunk(chunk) {
       const doc = extractDocMeta(chunk);
       if (!doc) return '';
       const ticker = String(doc.ticker || '').trim().toUpperCase();
       const yq = normalizeYearQuarter(doc.filing_quarter || doc.period_end_date || doc.filing_date);
       const form = normalizeFilingType(doc.filing_type);
-      if (ticker && yq && form) return `[${ticker} ${yq} ${form}]`;
+      if (ticker && yq && form) return `{${ticker} ${yq} ${form}]`;
       return '';
     }
 
@@ -676,11 +662,13 @@
         const source = String(c?.source || '').trim();
         if (!docId || !chunkId || !source) continue;
         if (citationTargetsByDocId.has(docId)) continue;
+        const label = formatCitationLabelFromChunk(c);
+        if (!label) continue; // doc_id is typically a UUID; only label using metadata-derived fields
         citationTargetsByDocId.set(docId, {
           doc_id: docId,
           chunk_id: chunkId,
           source,
-          label: formatCitationLabelFromChunk(c) || guessCitationLabelFromDocId(docId),
+          label,
         });
       }
     }
@@ -692,7 +680,8 @@
         const docId = String(docIdRaw || '').trim();
         if (!docId) return _m;
         const target = citationTargetsByDocId.get(docId);
-        const label = target?.label || guessCitationLabelFromDocId(docId);
+        if (!target?.label) return _m;
+        const label = target.label;
         return `<a href="#" class="citationLink" data-doc-id="${escapeHtmlAttr(docId)}" title="${escapeHtmlAttr(docId)}">${safeText(label)}</a>`;
       });
     }
@@ -1600,17 +1589,23 @@
 
       const fromReranked = (Array.isArray(lastRerankedChunks) ? lastRerankedChunks : []).find(c => String(c?.doc_id || '').trim() === d);
       if (fromReranked) {
-        return { doc_id: d, chunk_id: String(fromReranked.chunk_id || ''), source: String(fromReranked.source || ''), label: guessCitationLabelFromDocId(d) };
+        const label = formatCitationLabelFromChunk(fromReranked);
+        if (!label) return null;
+        return { doc_id: d, chunk_id: String(fromReranked.chunk_id || ''), source: String(fromReranked.source || ''), label };
       }
 
       const fromRetrieved = (Array.isArray(lastRetrievedChunks) ? lastRetrievedChunks : []).find(c => String(c?.doc_id || '').trim() === d);
       if (fromRetrieved) {
-        return { doc_id: d, chunk_id: String(fromRetrieved.chunk_id || ''), source: String(fromRetrieved.source || ''), label: guessCitationLabelFromDocId(d) };
+        const label = formatCitationLabelFromChunk(fromRetrieved);
+        if (!label) return null;
+        return { doc_id: d, chunk_id: String(fromRetrieved.chunk_id || ''), source: String(fromRetrieved.source || ''), label };
       }
 
       const fromDone = (Array.isArray(lastQueryResponse?.top_chunks) ? lastQueryResponse.top_chunks : []).find(c => String(c?.doc_id || '').trim() === d);
       if (fromDone) {
-        return { doc_id: d, chunk_id: String(fromDone.chunk_id || ''), source: String(fromDone.source || ''), label: guessCitationLabelFromDocId(d) };
+        const label = formatCitationLabelFromChunk(fromDone);
+        if (!label) return null;
+        return { doc_id: d, chunk_id: String(fromDone.chunk_id || ''), source: String(fromDone.source || ''), label };
       }
 
       return null;
