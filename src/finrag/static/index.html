@@ -186,6 +186,53 @@
       line-height: 1.2rem;
     }
     .code { font-family: var(--mono); font-size: 0.86rem; }
+    .qaSplit {
+      display: flex;
+      gap: 0;
+      align-items: stretch;
+      min-width: 0;
+      --sourcesPaneWidth: 440px;
+    }
+    .qaMain {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding-right: 1rem;
+    }
+    .qaSplitter {
+      flex: 0 0 14px;
+      cursor: col-resize;
+      position: relative;
+      touch-action: none;
+      user-select: none;
+    }
+    .qaSplitter::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 1px;
+      background: rgba(255,255,255,0.16);
+    }
+    .qaSplitter:hover::before { background: rgba(124,58,237,0.65); }
+    .qaSplitter:focus-visible { outline: 2px solid rgba(124,58,237,0.85); outline-offset: -3px; }
+    .qaSources {
+      flex: 0 0 var(--sourcesPaneWidth);
+      min-width: 320px;
+      max-width: 70%;
+      min-height: 0;
+      padding-left: 1rem;
+    }
+    body.resizing {
+      cursor: col-resize;
+      user-select: none;
+    }
+    @media (max-width: 980px) {
+      .qaSplit { flex-direction: column; }
+      .qaMain { padding-right: 0; }
+      .qaSplitter { display: none; }
+      .qaSources { flex: 0 0 auto; min-width: 0; max-width: none; width: 100%; padding-left: 0; margin-top: 1rem; }
+    }
   </style>
 </head>
 <body>
@@ -227,92 +274,97 @@
           </div>
         </div>
         <div class="panelBody">
+          <div class="qaSplit" id="qaSplit">
+            <div class="qaMain">
+              <form id="queryForm" style="margin-top: 1rem;">
+                <label class="muted" for="question">Question</label>
+                <textarea id="question" name="question" placeholder="e.g. Summarize the key risk factors mentioned in the latest filing for Company X."></textarea>
 
-          <form id="queryForm" style="margin-top: 1rem;">
-            <label class="muted" for="question">Question</label>
-            <textarea id="question" name="question" placeholder="e.g. Summarize the key risk factors mentioned in the latest filing for Company X."></textarea>
-
-            <div class="kv" style="margin-top: 0.75rem;">
-              <div>
-                <label class="muted" for="topKRetrieve">top_k_retrieve</label>
-                <input id="topKRetrieve" type="number" min="1" step="1" value="30" />
-              </div>
-              <div>
-                <label class="muted" for="topKRerank">top_k_rerank</label>
-                <input id="topKRerank" type="number" min="1" step="1" value="8" />
-              </div>
-              <div>
-                <label class="muted" for="draftMaxTokens">draft_max_tokens</label>
-                <input id="draftMaxTokens" type="number" min="1" step="1" value="65536" />
-              </div>
-              <div>
-                <label class="muted" for="finalMaxTokens">final_max_tokens</label>
-                <input id="finalMaxTokens" type="number" min="1" step="1" value="32768" />
-              </div>
-            </div>
-
-            <div class="row" style="margin-top: 0.85rem;">
-              <button class="btn primary" type="submit" id="queryBtn">Ask</button>
-              <button class="btn danger" type="button" id="stopBtn" disabled>Stop</button>
-              <button class="btn" type="button" id="copyAnswerBtn" disabled>Copy answer</button>
-              <button class="btn" type="button" id="copyDebugBtn" disabled>Copy debug</button>
-              <div class="spacer"></div>
-              <span class="statusLine" id="queryStatus"></span>
-            </div>
-          </form>
-
-          <div id="answerBlock" style="display:none; margin-top: 1rem;">
-            <div class="row" style="margin-bottom: 0.25rem;">
-              <h3 style="margin: 0; font-size: 1rem;">Progress</h3>
-              <div class="spacer"></div>
-              <span class="pill" id="requestIdPill">idle</span>
-            </div>
-            <div class="chunkText" id="progressLog" style="max-height: 18vh; margin-bottom: 0.9rem;"></div>
-
-            <details id="draftDetails" style="margin-bottom: 0.9rem;">
-              <summary>
-                <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
-                  <strong>Draft</strong>
-                  <span class="pill" id="draftStatePill">waiting</span>
-                </div>
-                <div class="muted" style="font-size: 0.86rem;">toggle</div>
-              </summary>
-              <div class="chunkBody">
-                <div class="answer markdown" id="draftAnswer"></div>
-              </div>
-            </details>
-
-            <div class="row" style="margin-bottom: 0.25rem;">
-              <h3 style="margin: 0; font-size: 1rem;">Final answer</h3>
-              <div class="spacer"></div>
-              <span class="pill" id="chunkCountPill">0 chunks</span>
-            </div>
-            <div class="answer markdown" id="finalAnswer"></div>
-
-            <div style="margin-top: 1rem;">
-              <details id="retrievedDetails" style="margin-bottom: 0.9rem;">
-                <summary>
-                  <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
-                    <strong>Retrieved (pre-rerank)</strong>
-                    <span class="pill" id="retrievedCountPill">0</span>
+                <div class="kv" style="margin-top: 0.75rem;">
+                  <div>
+                    <label class="muted" for="topKRetrieve">top_k_retrieve</label>
+                    <input id="topKRetrieve" type="number" min="1" step="1" value="30" />
                   </div>
-                  <div class="muted" style="font-size: 0.86rem;">toggle</div>
-                </summary>
-                <div class="chunkBody">
-                  <div id="retrievedChunks"></div>
+                  <div>
+                    <label class="muted" for="topKRerank">top_k_rerank</label>
+                    <input id="topKRerank" type="number" min="1" step="1" value="8" />
+                  </div>
+                  <div>
+                    <label class="muted" for="draftMaxTokens">draft_max_tokens</label>
+                    <input id="draftMaxTokens" type="number" min="1" step="1" value="65536" />
+                  </div>
+                  <div>
+                    <label class="muted" for="finalMaxTokens">final_max_tokens</label>
+                    <input id="finalMaxTokens" type="number" min="1" step="1" value="32768" />
+                  </div>
                 </div>
-              </details>
 
-              <h3 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Reranked chunks (used for answer)</h3>
-              <div class="help" style="margin-bottom: 0.6rem;">
-                Use “Open source” to view the underlying PDF/Markdown. For local paths outside the allowlist, set
-                <span class="code">SOURCE_ROOTS</span> on the server.
+                <div class="row" style="margin-top: 0.85rem;">
+                  <button class="btn primary" type="submit" id="queryBtn">Ask</button>
+                  <button class="btn danger" type="button" id="stopBtn" disabled>Stop</button>
+                  <button class="btn" type="button" id="copyAnswerBtn" disabled>Copy answer</button>
+                  <button class="btn" type="button" id="copyDebugBtn" disabled>Copy debug</button>
+                  <div class="spacer"></div>
+                  <span class="statusLine" id="queryStatus"></span>
+                </div>
+              </form>
+
+              <div id="answerBlock" style="display:none; margin-top: 1rem;">
+                <div class="row" style="margin-bottom: 0.25rem;">
+                  <h3 style="margin: 0; font-size: 1rem;">Progress</h3>
+                  <div class="spacer"></div>
+                  <span class="pill" id="requestIdPill">idle</span>
+                </div>
+                <div class="chunkText" id="progressLog" style="max-height: 18vh; margin-bottom: 0.9rem;"></div>
+
+                <details id="draftDetails" style="margin-bottom: 0.9rem;">
+                  <summary>
+                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                      <strong>Draft</strong>
+                      <span class="pill" id="draftStatePill">waiting</span>
+                    </div>
+                    <div class="muted" style="font-size: 0.86rem;">toggle</div>
+                  </summary>
+                  <div class="chunkBody">
+                    <div class="answer markdown" id="draftAnswer"></div>
+                  </div>
+                </details>
+
+                <div class="row" style="margin-bottom: 0.25rem;">
+                  <h3 style="margin: 0; font-size: 1rem;">Final answer</h3>
+                  <div class="spacer"></div>
+                  <span class="pill" id="chunkCountPill">0 chunks</span>
+                </div>
+                <div class="answer markdown" id="finalAnswer"></div>
+
+                <div style="margin-top: 1rem;">
+                  <details id="retrievedDetails" style="margin-bottom: 0.9rem;">
+                    <summary>
+                      <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                        <strong>Retrieved (pre-rerank)</strong>
+                        <span class="pill" id="retrievedCountPill">0</span>
+                      </div>
+                      <div class="muted" style="font-size: 0.86rem;">toggle</div>
+                    </summary>
+                    <div class="chunkBody">
+                      <div id="retrievedChunks"></div>
+                    </div>
+                  </details>
+
+                  <h3 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Reranked chunks (used for answer)</h3>
+                  <div class="help" style="margin-bottom: 0.6rem;">
+                    Use “Open source” to view the underlying PDF/Markdown. For local paths outside the allowlist, set
+                    <span class="code">SOURCE_ROOTS</span> on the server.
+                  </div>
+                  <div id="chunks"></div>
+                </div>
               </div>
-              <div id="chunks"></div>
             </div>
 
-            <div style="margin-top: 1rem;">
-              <details id="sourceViewerDetails">
+            <div class="qaSplitter" id="qaSplitter" role="separator" aria-orientation="vertical" aria-label="Resize source viewer" tabindex="0"></div>
+
+            <aside class="qaSources" id="qaSources">
+              <details id="sourceViewerDetails" open>
                 <summary>
                   <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
                     <strong>Source viewer</strong>
@@ -332,10 +384,10 @@
                   <div class="help" style="margin-bottom:0.6rem;">
                     Best-effort highlighting by matching chunk text inside the source markdown. For non-markdown sources, use “Open source”.
                   </div>
-                  <div class="chunkText" id="sourceContent" style="max-height: 52vh;"></div>
+                  <div class="chunkText" id="sourceContent" style="max-height: 70vh;"></div>
                 </div>
               </details>
-            </div>
+            </aside>
           </div>
         </div>
       </section>
@@ -390,10 +442,16 @@
       sourceToggleModeBtn: $('sourceToggleModeBtn'),
       sourceStatus: $('sourceStatus'),
       sourceContent: $('sourceContent'),
+
+      qaSplit: $('qaSplit'),
+      qaSplitter: $('qaSplitter'),
+      qaSources: $('qaSources'),
     };
 
     const LS_HISTORY = 'finrag_history_v1';
     const LS_SETTINGS = 'finrag_settings_v1';
+    const LS_UI = 'finrag_ui_v1';
+    const DEFAULT_SOURCES_PANE_WIDTH_PX = 440;
 
     let historyItems = [];
     let activeEntry = null;
@@ -570,6 +628,7 @@
 
     function populateSourceSelect() {
       const sources = Array.from(lastChunksBySource.keys()).filter(isMarkdownSource);
+      const prev = String(els.sourceSelect.value || '').trim();
       els.sourceSelect.innerHTML = '';
       sources.forEach((src) => {
         const opt = document.createElement('option');
@@ -580,16 +639,25 @@
       });
       els.sourceCountPill.textContent = `${sources.length} docs`;
       if (!sources.length) {
+        els.sourceSelect.disabled = true;
         const opt = document.createElement('option');
         opt.value = '';
         opt.textContent = 'No markdown sources in current results';
         els.sourceSelect.appendChild(opt);
+        renderSourceViewer('', null);
+        return;
       }
+      els.sourceSelect.disabled = false;
+      const selected = sources.includes(prev) ? prev : sources[0];
+      els.sourceSelect.value = selected;
+      renderSourceViewer(selected, null);
     }
 
     async function renderSourceViewer(source, activeChunkId) {
       const src = String(source || '').trim();
       if (!src || !isMarkdownSource(src)) {
+        els.sourceModePill.textContent = sourceMode;
+        els.sourceStatus.textContent = '';
         els.sourceContent.innerHTML = '<div class="muted">Select a markdown source to view it here.</div>';
         return;
       }
@@ -666,6 +734,116 @@
 
     function writeSettings(settings) {
       try { localStorage.setItem(LS_SETTINGS, JSON.stringify(settings)); } catch {}
+    }
+
+    function readUi() {
+      try {
+        const raw = localStorage.getItem(LS_UI);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
+
+    function writeUi(patch) {
+      try {
+        const prev = readUi() || {};
+        const next = { ...prev, ...(patch || {}) };
+        localStorage.setItem(LS_UI, JSON.stringify(next));
+      } catch {}
+    }
+
+    function clampSourcesPaneWidth(px) {
+      const n = Number(px);
+      if (!Number.isFinite(n)) return DEFAULT_SOURCES_PANE_WIDTH_PX;
+      const rect = els.qaSplit?.getBoundingClientRect?.();
+      const containerWidth = rect?.width || 0;
+      const min = 320;
+      const max = containerWidth ? Math.max(min, Math.floor(containerWidth * 0.7)) : 900;
+      return Math.min(max, Math.max(min, Math.round(n)));
+    }
+
+    function setSourcesPaneWidth(px) {
+      if (!els.qaSplit) return null;
+      const w = clampSourcesPaneWidth(px);
+      els.qaSplit.style.setProperty('--sourcesPaneWidth', `${w}px`);
+      if (els.qaSplitter) {
+        els.qaSplitter.setAttribute('aria-valuenow', String(w));
+        els.qaSplitter.setAttribute('aria-valuemin', '320');
+      }
+      return w;
+    }
+
+    function applyUi(ui) {
+      if (!els.qaSplit) return;
+      const w = ui?.sourcesPaneWidthPx ?? ui?.sources_pane_width_px ?? null;
+      const applied = setSourcesPaneWidth(Number(w) || DEFAULT_SOURCES_PANE_WIDTH_PX);
+      if (els.qaSplitter && applied) {
+        const rect = els.qaSplit.getBoundingClientRect();
+        const max = rect?.width ? Math.max(320, Math.floor(rect.width * 0.7)) : 900;
+        els.qaSplitter.setAttribute('aria-valuemax', String(max));
+      }
+    }
+
+    function setupSourcesSplitter() {
+      if (!els.qaSplit || !els.qaSplitter) return;
+
+      let dragging = false;
+      const raw = getComputedStyle(els.qaSplit).getPropertyValue('--sourcesPaneWidth').trim();
+      const m = raw.match(/(\d+)\s*px/);
+      const initial = m ? Number(m[1]) : DEFAULT_SOURCES_PANE_WIDTH_PX;
+      let lastAppliedWidth = setSourcesPaneWidth(initial) || DEFAULT_SOURCES_PANE_WIDTH_PX;
+
+      const applyFromPointer = (clientX) => {
+        const rect = els.qaSplit.getBoundingClientRect();
+        const raw = rect.right - clientX;
+        const applied = setSourcesPaneWidth(raw);
+        if (typeof applied === 'number') lastAppliedWidth = applied;
+        els.qaSplitter.setAttribute('aria-valuemax', String(Math.max(320, Math.floor(rect.width * 0.7))));
+      };
+
+      const endDrag = () => {
+        if (!dragging) return;
+        dragging = false;
+        document.body.classList.remove('resizing');
+        writeUi({ sourcesPaneWidthPx: lastAppliedWidth });
+      };
+
+      els.qaSplitter.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        dragging = true;
+        document.body.classList.add('resizing');
+        try { els.qaSplitter.setPointerCapture(e.pointerId); } catch {}
+        applyFromPointer(e.clientX);
+      });
+      els.qaSplitter.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        applyFromPointer(e.clientX);
+      });
+      els.qaSplitter.addEventListener('pointerup', () => endDrag());
+      els.qaSplitter.addEventListener('pointercancel', () => endDrag());
+      els.qaSplitter.addEventListener('dblclick', () => {
+        lastAppliedWidth = setSourcesPaneWidth(DEFAULT_SOURCES_PANE_WIDTH_PX) || DEFAULT_SOURCES_PANE_WIDTH_PX;
+        writeUi({ sourcesPaneWidthPx: lastAppliedWidth });
+      });
+      els.qaSplitter.addEventListener('keydown', (e) => {
+        const step = e.shiftKey ? 60 : 20;
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          lastAppliedWidth = setSourcesPaneWidth(lastAppliedWidth + step) || lastAppliedWidth;
+          writeUi({ sourcesPaneWidthPx: lastAppliedWidth });
+        }
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          lastAppliedWidth = setSourcesPaneWidth(lastAppliedWidth - step) || lastAppliedWidth;
+          writeUi({ sourcesPaneWidthPx: lastAppliedWidth });
+        }
+      });
+
+      window.addEventListener('resize', () => {
+        lastAppliedWidth = setSourcesPaneWidth(lastAppliedWidth) || lastAppliedWidth;
+      });
     }
 
     function currentSettings() {
@@ -869,6 +1047,8 @@
         renderHistory();
         els.activeEntryPill.textContent = 'no selection';
         els.answerBlock.style.display = 'none';
+        lastChunksBySource = new Map();
+        populateSourceSelect();
       } catch (e) {
         alert('Failed to clear history: ' + e);
       } finally {
@@ -943,6 +1123,8 @@
       els.retrievedCountPill.textContent = '0 chunks';
       els.retrievedChunks.innerHTML = '';
       renderChunks([], { container: els.chunks, countPill: els.chunkCountPill });
+      lastChunksBySource = new Map();
+      populateSourceSelect();
 
       let draftText = '';
       let finalText = '';
@@ -1162,6 +1344,9 @@
 
     (function init() {
       applySettings(readSettings());
+      applyUi(readUi());
+      setupSourcesSplitter();
+      populateSourceSelect();
       checkHealth();
       loadHistory();
     })();
