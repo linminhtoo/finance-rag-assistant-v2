@@ -20,7 +20,12 @@ from finrag.dataclasses import TopChunk
 from finrag.llm_clients import get_llm_client
 from finrag.context_support import apply_context_strategy, context_builder_from_metadata
 from finrag.qa import answer_question_two_stage
-from finrag.retriever import CrossEncoderReranker, QdrantHybridRetriever, MilvusContextualRetriever, build_milvus_embedding_functions
+from finrag.retriever import (
+    CrossEncoderReranker,
+    QdrantHybridRetriever,
+    MilvusContextualRetriever,
+    build_milvus_embedding_functions,
+)
 
 
 # -------------------------------------------------------------------
@@ -94,7 +99,9 @@ def _llm_for_embeddings():
             embed_model=_llm_embed_model() or "text-embedding-3-large",
         )
     embed_model = _llm_embed_model()
-    return get_llm_client(provider=provider, embed_model=embed_model) if embed_model else get_llm_client(provider=provider)
+    return (
+        get_llm_client(provider=provider, embed_model=embed_model) if embed_model else get_llm_client(provider=provider)
+    )
 
 
 def _llm_for_chat():
@@ -102,7 +109,7 @@ def _llm_for_chat():
     langsmith_trace = False
     if os.environ.get("LANGSMITH_TRACING", "false").lower() == "true":
         langsmith_trace = True
-    
+
     if _llm_provider_name() == "openai":
         return get_llm_client(
             provider=provider,
@@ -110,7 +117,7 @@ def _llm_for_chat():
             chat_model=_llm_chat_model() or "gpt-4o-mini",
             langsmith_trace=langsmith_trace,
         )
-    
+
     if langsmith_trace:
         logger.warning("LANGSMITH_TRACING is only supported for OpenAI provider at this time.")
     chat_model = _llm_chat_model()
@@ -168,7 +175,7 @@ def build_milvus_retriever() -> MilvusContextualRetriever:
     """
 
     project_root = Path(__file__).resolve().parents[2]
-    
+
     # NOTE: MILVUS_URI only accepts http[s]://
     # filepaths should be provided via MILVUS_PATH for local storage
     milvus_uri = os.getenv("MILVUS_URI") or os.getenv("MILVUS_PATH") or str(project_root / "data" / "milvus.db")
@@ -177,7 +184,7 @@ def build_milvus_retriever() -> MilvusContextualRetriever:
     logger.info(f"Using {milvus_uri=}")
 
     collection_name = os.getenv("MILVUS_COLLECTION_NAME") or "finrag_milvus_collection"
-    
+
     use_sparse = _env_bool("MILVUS_USE_SPARSE", default=True)
     sparse_kind = os.getenv("MILVUS_SPARSE_EMBEDDING", "bm25").strip().lower()
     if sparse_kind == "none":
@@ -186,7 +193,7 @@ def build_milvus_retriever() -> MilvusContextualRetriever:
     bm25_path = os.getenv("BM25_PATH")
     if bm25_path:
         bm25_path = os.path.expanduser(bm25_path)
-    
+
     dense_kind = os.getenv("MILVUS_DENSE_EMBEDDING", "llm").strip().lower()
 
     _, _, context_key = _context_config()
@@ -259,7 +266,7 @@ class RAGService:
         - Direct Docling PDF parsing -> HybridChunker
         """
         raise RuntimeError("On-the-fly ingestion is disabled for now. Use batch ingestion script.")
-    
+
         if isinstance(self.retriever, MilvusContextualRetriever) and self.retriever.use_sparse:
             if self.retriever.uses_bm25:
                 raise RuntimeError(
@@ -301,11 +308,7 @@ class RAGService:
         # TODO: add query re-writing, and also consider HyDE
 
         draft, final = answer_question_two_stage(
-            self.llm,
-            question,
-            reranked,
-            draft_max_tokens=draft_max_tokens,
-            final_max_tokens=final_max_tokens,
+            self.llm, question, reranked, draft_max_tokens=draft_max_tokens, final_max_tokens=final_max_tokens
         )
 
         # Serialize top chunks for the frontend
@@ -427,9 +430,7 @@ def _resolve_local_source(path: str) -> Path:
     if not any(p == root or p.is_relative_to(root) for root in allowed):
         raise HTTPException(
             status_code=403,
-            detail=(
-                "Path is outside SOURCE_ROOTS; set SOURCE_ROOTS to a colon-separated allowlist of directories."
-            ),
+            detail=("Path is outside SOURCE_ROOTS; set SOURCE_ROOTS to a colon-separated allowlist of directories."),
         )
 
     return p
@@ -443,10 +444,7 @@ def get_source(path: str = Query(..., description="Local file path or URL")):
     p = _resolve_local_source(path)
     media_type, _enc = mimetypes.guess_type(str(p))
     return FileResponse(
-        path=p,
-        media_type=media_type or "application/octet-stream",
-        filename=p.name,
-        content_disposition_type="inline",
+        path=p, media_type=media_type or "application/octet-stream", filename=p.name, content_disposition_type="inline"
     )
 
 
@@ -496,10 +494,7 @@ def _append_history(*, req: QueryRequest, res: QueryResponse) -> None:
     if _env_bool("DISABLE_HISTORY", default=False):
         return
     entry = HistoryEntry(
-        id=str(uuid.uuid4()),
-        created_at=datetime.now(timezone.utc).isoformat(),
-        request=req,
-        response=res,
+        id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc).isoformat(), request=req, response=res
     )
     path = _history_path()
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -117,6 +117,7 @@ def apply_context_strategy(
         raise ValueError(f"llm_for_context must be provided when strategy={strategy!r}")
 
     if strategy == "document":
+
         def _apply_document() -> None:
             nonlocal doc_text
             if doc_text is None:
@@ -134,9 +135,7 @@ def apply_context_strategy(
                 if doc_text is None:
                     raise ValueError("doc_text is None in _run_item")
                 idx, ch = item
-                situated = situate_context(
-                    llm_for_context, context=doc_text, chunk=ch.text, temperature=temperature
-                )
+                situated = situate_context(llm_for_context, context=doc_text, chunk=ch.text, temperature=temperature)
                 return idx, situated
 
             with ThreadPoolExecutor(max_workers=max_workers) as pool:
@@ -159,6 +158,7 @@ def apply_context_strategy(
         return
 
     if strategy == "neighbors":
+
         def _apply_neighbors() -> None:
             window = max(0, int(neighbor_window))
             if window == 0:

@@ -68,11 +68,7 @@ def download_primary(cik, acc_no, primary_doc, timeout: int = 60):
 
 
 def fetch_10ks_for_tickers(
-    tickers: list[str],
-    output_dir: Path,
-    per_company: int = 5,
-    delay: float = 0.2,
-    skip_existing: bool = False,
+    tickers: list[str], output_dir: Path, per_company: int = 5, delay: float = 0.2, skip_existing: bool = False
 ):
     out_raw_folder = output_dir / "raw_htmls"
     out_meta_folder = output_dir / "meta"

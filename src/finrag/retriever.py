@@ -390,11 +390,7 @@ class LLMDenseEmbedder:
 
 
 def build_milvus_embedding_functions(
-    *,
-    llm_client_for_dense: LLMClient,
-    dense_kind: str,
-    sparse_kind: str,
-    use_sparse: bool,
+    *, llm_client_for_dense: LLMClient, dense_kind: str, sparse_kind: str, use_sparse: bool
 ) -> tuple[DenseEmbedder, SparseEmbedder | BGEM3EmbeddingFunction | None]:
     """
     Build Milvus dense/sparse embedding functions.
@@ -409,7 +405,7 @@ def build_milvus_embedding_functions(
         Sparse embedding backend ("bm25", "bge-m3", or "none").
     use_sparse : bool
         Whether sparse embeddings are enabled.
-    
+
     Returns
     -------
     tuple
@@ -431,7 +427,7 @@ def build_milvus_embedding_functions(
             dense = BGEM3EmbeddingFunction(return_dense=True, return_sparse=False)
     else:
         raise ValueError(f"Unknown dense embedding backend: {dense_kind}")
-    
+
     if use_sparse and sparse is None:
         if sparse_kind == "bm25":
             sparse = BM25EmbeddingFunction()
@@ -441,7 +437,7 @@ def build_milvus_embedding_functions(
             sparse = None
         else:
             raise ValueError(f"Unknown sparse embedding backend: {sparse_kind}")
-        
+
     return dense, sparse
 
 
@@ -583,17 +579,9 @@ class MilvusContextualRetriever:
         for i in range(0, len(ids), bs):
             batch = ids[i : i + bs]
             try:
-                records = self.client.get(
-                    collection_name=self.collection_name,
-                    ids=batch,
-                    output_fields=["chunk_id"],
-                )
+                records = self.client.get(collection_name=self.collection_name, ids=batch, output_fields=["chunk_id"])
             except TypeError:
-                records = self.client.get(
-                    self.collection_name,
-                    batch,
-                    output_fields=["chunk_id"],
-                )
+                records = self.client.get(self.collection_name, batch, output_fields=["chunk_id"])
             if not records:
                 continue
             for rec in records:
@@ -819,11 +807,7 @@ class MilvusContextualRetriever:
         data: list[dict[str, Any]] = []
         for idx, chunk in enumerate(chunks):
             payload = self._payload_from_chunk(chunk, contexts[idx])
-            row = {
-                "chunk_id": chunk.id,
-                "dense_vector": dense_vectors[idx].tolist(),
-                "payload": payload,
-            }
+            row = {"chunk_id": chunk.id, "dense_vector": dense_vectors[idx].tolist(), "payload": payload}
             if self.use_sparse:
                 if sparse_vectors is None:
                     raise RuntimeError("use_sparse=True but sparse_vectors is None")
@@ -970,6 +954,7 @@ class CrossEncoderReranker:
         Defaults to "cross-encoder/ms-marco-MiniLM-L-6-v2".
         Users can also experiment with "BAAI/bge-reranker-v2-gemma".
     """
+
     def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
         self.model = CrossEncoder(model_name, trust_remote_code=True)
 

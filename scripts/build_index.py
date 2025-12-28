@@ -119,10 +119,7 @@ def parse_args() -> Args:
         help="Context strategy for embeddings (default: none).",
     )
     parser.add_argument(
-        "--context-window",
-        type=int,
-        default=2,
-        help="Neighbor window size when using --context=neighbors.",
+        "--context-window", type=int, default=2, help="Neighbor window size when using --context=neighbors."
     )
     parser.add_argument(
         "--context-max-concurrency",
@@ -131,9 +128,7 @@ def parse_args() -> Args:
         help="Max parallel LLM calls when generating situated context (default: 32).",
     )
     parser.add_argument(
-        "--context-metadata-key",
-        default="context",
-        help="Metadata key to store context text when building embeddings.",
+        "--context-metadata-key", default="context", help="Metadata key to store context text when building embeddings."
     )
     parser.add_argument(
         "--llm-provider",
@@ -149,9 +144,7 @@ def parse_args() -> Args:
         ),
     )
     parser.add_argument(
-        "--dense-model",
-        default="BAAI/bge-m3",
-        help="Name of embedding model. Used by all llm providers.",
+        "--dense-model", default="BAAI/bge-m3", help="Name of embedding model. Used by all llm providers."
     )
     parser.add_argument(
         "--contextual-model",
@@ -386,10 +379,12 @@ def main() -> int:
     llm_for_context = None
     if args.context in {"document", "neighbors"}:
         resolved_provider = (
-            args.contextual_llm_provider or args.llm_provider or os.getenv("LLM_PROVIDER") or "openai"
-        ).strip().lower()
+            (args.contextual_llm_provider or args.llm_provider or os.getenv("LLM_PROVIDER") or "openai").strip().lower()
+        )
         if resolved_provider == "fastembed":
-            raise SystemExit("--contextual-llm-provider fastembed is not supported (fastembed does not implement chat).")
+            raise SystemExit(
+                "--contextual-llm-provider fastembed is not supported (fastembed does not implement chat)."
+            )
         ctx_kwargs = dict(llm_kwargs)
         if args.contextual_model:
             ctx_kwargs["chat_model"] = args.contextual_model
@@ -484,7 +479,7 @@ def main() -> int:
     # NOTE: when adding new documents to an existing collection,
     # we should avoid re-contextualising chunks (expensive), and re-creating dense embeddings
     # BM25 sparse embeddings do need to be re-created for all documents since the corpus has changed
-    # via --expand-collection, we try to provide an API 
+    # via --expand-collection, we try to provide an API
     # to efficiently "expand" an existing collection with new documents
     try:
         milvus_retriever: MilvusContextualRetriever | None = None
@@ -531,7 +526,12 @@ def main() -> int:
                             if not payload:
                                 continue
                             cid = (
-                                str(_milvus_extract_field(rec, "chunk_id") or payload.get("chunk_id") or _milvus_extract_field(rec, "id") or "")
+                                str(
+                                    _milvus_extract_field(rec, "chunk_id")
+                                    or payload.get("chunk_id")
+                                    or _milvus_extract_field(rec, "id")
+                                    or ""
+                                )
                             ).strip()
                             if not cid:
                                 continue
@@ -542,7 +542,9 @@ def main() -> int:
                             existing_ids.append(cid)
                             existing_dense.append(dense_vec)
                             existing_payloads.append(payload)
-                            existing_texts.append(_milvus_text_with_context(payload, context_metadata_key=args.context_metadata_key))
+                            existing_texts.append(
+                                _milvus_text_with_context(payload, context_metadata_key=args.context_metadata_key)
+                            )
 
                             meta = payload.get("metadata")
                             if isinstance(meta, dict) and meta.get(args.context_metadata_key):
@@ -651,10 +653,7 @@ def main() -> int:
         logger.warning(f"Indexing stopped early. indexed_docs={total_docs} indexed_chunks={total_chunks}")
     else:
         logger.success(f"Done. indexed_docs={total_docs} indexed_chunks={total_chunks}")
-    logger.success(
-        f"Elapsed time: {round(time.time() - started_at, 2)}s. "
-        f"Wrote: {run_info_path}"
-    )
+    logger.success(f"Elapsed time: {round(time.time() - started_at, 2)}s. Wrote: {run_info_path}")
     return 1 if had_error else 0
 
 

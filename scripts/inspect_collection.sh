@@ -9,4 +9,3 @@ python3 -m scripts.inspect_collection \
     --json \
     --limit 10 \
     2>&1 | tee "logs/inspect_collection_${now}.log"
-

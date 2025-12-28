@@ -53,7 +53,9 @@ def main() -> None:
     ap.add_argument("--reranker-model", default="cross-encoder/ms-marco-MiniLM-L-6-v2")
     ap.add_argument("--llm-provider", default=None, help="Overrides LLM_PROVIDER (e.g. mistral, openai, fastembed)")
     ap.add_argument("--llm-kwargs", default=None, help="JSON dict passed to get_llm_client(...) (advanced)")
-    ap.add_argument("--answer-llm-provider", default=None, help="Provider for answer generation (defaults to --llm-provider)")
+    ap.add_argument(
+        "--answer-llm-provider", default=None, help="Provider for answer generation (defaults to --llm-provider)"
+    )
     ap.add_argument(
         "--answer-llm-kwargs",
         default=None,
@@ -125,9 +127,7 @@ def main() -> None:
     # and also avoid re-chunking docs that had been ingested by the retriever.
     chunker = SecHtmlChunker(max_words=args.max_words, overlap_words=args.overlap_words)
     pending_chunks: list = []
-    needs_bm25_fit = (
-        args.retriever_backend == "milvus" and use_sparse and retriever.uses_bm25 and not bm25_loaded
-    )
+    needs_bm25_fit = args.retriever_backend == "milvus" and use_sparse and retriever.uses_bm25 and not bm25_loaded
     for doc in docs:
         chunks = chunker.chunk_html_file(doc.source_path, doc_id=doc.doc_id, metadata=doc.meta)
         if needs_bm25_fit:
@@ -144,9 +144,7 @@ def main() -> None:
             retriever.save_bm25(args.milvus_bm25_path)
 
     cfg = EvalConfig(top_k_retrieve=args.top_k_retrieve, top_k_rerank=args.top_k_rerank, do_answer=args.do_answer)
-    run = run_eval(
-        items, retriever=retriever, reranker=reranker, cfg=cfg, llm_for_answer=llm_for_answer
-    )
+    run = run_eval(items, retriever=retriever, reranker=reranker, cfg=cfg, llm_for_answer=llm_for_answer)
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

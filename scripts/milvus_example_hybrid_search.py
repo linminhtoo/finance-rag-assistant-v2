@@ -626,9 +626,7 @@ def parse_args() -> Args:
     ns = parser.parse_args()
     api_key_env, base_url_env = _openai_config_from_env()
     base_url = str(ns.openai_base_url).strip() if ns.openai_base_url else base_url_env
-    embedding_base_url = (
-        str(ns.openai_embedding_base_url).strip() if ns.openai_embedding_base_url else base_url
-    )
+    embedding_base_url = str(ns.openai_embedding_base_url).strip() if ns.openai_embedding_base_url else base_url
     context_base_url = str(ns.openai_context_base_url).strip() if ns.openai_context_base_url else base_url
 
     return Args(
