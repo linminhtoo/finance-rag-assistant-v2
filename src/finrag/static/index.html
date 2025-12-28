@@ -253,6 +253,7 @@
 
             <div class="row" style="margin-top: 0.85rem;">
               <button class="btn primary" type="submit" id="queryBtn">Ask</button>
+              <button class="btn danger" type="button" id="stopBtn" disabled>Stop</button>
               <button class="btn" type="button" id="copyAnswerBtn" disabled>Copy answer</button>
               <button class="btn" type="button" id="copyDebugBtn" disabled>Copy debug</button>
               <div class="spacer"></div>
@@ -262,6 +263,26 @@
 
           <div id="answerBlock" style="display:none; margin-top: 1rem;">
             <div class="row" style="margin-bottom: 0.25rem;">
+              <h3 style="margin: 0; font-size: 1rem;">Progress</h3>
+              <div class="spacer"></div>
+              <span class="pill" id="requestIdPill">idle</span>
+            </div>
+            <div class="chunkText" id="progressLog" style="max-height: 18vh; margin-bottom: 0.9rem;"></div>
+
+            <details id="draftDetails" style="margin-bottom: 0.9rem;">
+              <summary>
+                <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                  <strong>Draft</strong>
+                  <span class="pill" id="draftStatePill">waiting</span>
+                </div>
+                <div class="muted" style="font-size: 0.86rem;">toggle</div>
+              </summary>
+              <div class="chunkBody">
+                <div class="answer markdown" id="draftAnswer"></div>
+              </div>
+            </details>
+
+            <div class="row" style="margin-bottom: 0.25rem;">
               <h3 style="margin: 0; font-size: 1rem;">Final answer</h3>
               <div class="spacer"></div>
               <span class="pill" id="chunkCountPill">0 chunks</span>
@@ -269,7 +290,20 @@
             <div class="answer markdown" id="finalAnswer"></div>
 
             <div style="margin-top: 1rem;">
-              <h3 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Retrieved chunks</h3>
+              <details id="retrievedDetails" style="margin-bottom: 0.9rem;">
+                <summary>
+                  <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                    <strong>Retrieved (pre-rerank)</strong>
+                    <span class="pill" id="retrievedCountPill">0</span>
+                  </div>
+                  <div class="muted" style="font-size: 0.86rem;">toggle</div>
+                </summary>
+                <div class="chunkBody">
+                  <div id="retrievedChunks"></div>
+                </div>
+              </details>
+
+              <h3 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Reranked chunks (used for answer)</h3>
               <div class="help" style="margin-bottom: 0.6rem;">
                 Use “Open source” to view the underlying PDF/Markdown. For local paths outside the allowlist, set
                 <span class="code">SOURCE_ROOTS</span> on the server.
@@ -329,10 +363,19 @@
       draftMaxTokens: $('draftMaxTokens'),
       finalMaxTokens: $('finalMaxTokens'),
       queryBtn: $('queryBtn'),
+      stopBtn: $('stopBtn'),
       queryStatus: $('queryStatus'),
 
       answerBlock: $('answerBlock'),
+      requestIdPill: $('requestIdPill'),
+      progressLog: $('progressLog'),
+      draftDetails: $('draftDetails'),
+      draftStatePill: $('draftStatePill'),
+      draftAnswer: $('draftAnswer'),
       finalAnswer: $('finalAnswer'),
+      retrievedDetails: $('retrievedDetails'),
+      retrievedCountPill: $('retrievedCountPill'),
+      retrievedChunks: $('retrievedChunks'),
       chunks: $('chunks'),
       chunkCountPill: $('chunkCountPill'),
 
@@ -707,12 +750,14 @@
       return '/source?path=' + encodeURIComponent(s);
     }
 
-    function renderChunks(chunks) {
+    function renderChunks(chunks, opts) {
+      const container = opts?.container || els.chunks;
+      const countPill = opts?.countPill || els.chunkCountPill;
       const list = Array.isArray(chunks) ? chunks : [];
-      els.chunkCountPill.textContent = `${list.length} chunks`;
-      els.chunks.innerHTML = '';
+      if (countPill) countPill.textContent = `${list.length} chunks`;
+      container.innerHTML = '';
       if (!list.length) {
-        els.chunks.innerHTML = '<div class="muted">No chunks returned.</div>';
+        container.innerHTML = '<div class="muted">No chunks returned.</div>';
         return;
       }
 
@@ -767,7 +812,7 @@
             renderSourceViewer(src, String(c.chunk_id || ''));
           });
         }
-        els.chunks.appendChild(details);
+        container.appendChild(details);
       });
     }
 
@@ -775,6 +820,10 @@
       if (!it) return;
       const res = it.response || {};
       els.answerBlock.style.display = 'block';
+      els.requestIdPill.textContent = it.id ? ('hist ' + String(it.id).slice(0, 8)) : 'history';
+      els.progressLog.textContent = '';
+      els.draftStatePill.textContent = 'done';
+      els.draftAnswer.innerHTML = renderMarkdown(String(res.draft_answer ?? ''));
       els.finalAnswer.innerHTML = renderMarkdown(String(res.final_answer ?? ''));
       const chunks = res.top_chunks || [];
       renderChunks(chunks);
@@ -851,40 +900,216 @@
       }
     }
 
+    let activeStream = null; // { controller, requestId }
+
+    function appendProgress(line) {
+      const prev = String(els.progressLog.textContent || '');
+      const next = prev ? (prev + '\n' + String(line)) : String(line);
+      els.progressLog.textContent = next;
+      els.progressLog.scrollTop = els.progressLog.scrollHeight;
+    }
+
+    async function stopActiveQuery() {
+      const stream = activeStream;
+      if (!stream) return;
+      try { stream.controller.abort(); } catch {}
+      const rid = stream.requestId;
+      if (rid) {
+        fetch('/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ request_id: rid }),
+        }).catch(() => {});
+      }
+      activeStream = null;
+    }
+
     async function doQuery(question) {
       const settings = currentSettings();
       writeSettings(settings);
 
       els.queryBtn.disabled = true;
-      els.queryStatus.textContent = 'Retrieving & generating…';
+      els.stopBtn.disabled = false;
+      els.queryStatus.textContent = 'Starting…';
       els.copyAnswerBtn.disabled = true;
       els.copyDebugBtn.disabled = true;
+
+      els.answerBlock.style.display = 'block';
+      els.requestIdPill.textContent = '…';
+      els.progressLog.textContent = '';
+      els.draftStatePill.textContent = 'waiting';
+      els.draftAnswer.innerHTML = '';
+      els.finalAnswer.innerHTML = '';
+      els.retrievedCountPill.textContent = '0 chunks';
+      els.retrievedChunks.innerHTML = '';
+      renderChunks([], { container: els.chunks, countPill: els.chunkCountPill });
+
+      let draftText = '';
+      let finalText = '';
+      let draftRenderTimer = null;
+      let finalRenderTimer = null;
+      let streamState = null;
+
       try {
-        const res = await fetch('/query', {
+        await stopActiveQuery();
+        const controller = new AbortController();
+        streamState = { controller, requestId: null };
+        activeStream = streamState;
+
+        const res = await fetch('/query_stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question, ...settings }),
+          signal: controller.signal,
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const data = await res.json();
-        lastQueryResponse = data;
-        els.answerBlock.style.display = 'block';
-        els.finalAnswer.innerHTML = renderMarkdown(String(data.final_answer ?? ''));
-        const chunks = data.top_chunks || [];
-        renderChunks(chunks);
-        lastChunksBySource = buildChunksBySource(chunks);
-        populateSourceSelect();
-        els.queryStatus.textContent = '';
-        els.copyAnswerBtn.disabled = !String(data.final_answer ?? '').trim();
-        els.copyDebugBtn.disabled = false;
 
-        // Refresh persisted history so the new entry shows up with its server timestamp/id.
-        await loadHistoryFromServer();
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error('Missing response body');
+
+        const decoder = new TextDecoder();
+        let buf = '';
+        const scheduleDraftRender = () => {
+          if (draftRenderTimer) return;
+          draftRenderTimer = setTimeout(() => {
+            els.draftAnswer.innerHTML = renderMarkdown(draftText);
+            draftRenderTimer = null;
+          }, 120);
+        };
+        const scheduleFinalRender = () => {
+          if (finalRenderTimer) return;
+          finalRenderTimer = setTimeout(() => {
+            els.finalAnswer.innerHTML = renderMarkdown(finalText);
+            finalRenderTimer = null;
+          }, 120);
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx);
+            buf = buf.slice(idx + 1);
+            if (!line.trim()) continue;
+            let evt = null;
+            try { evt = JSON.parse(line); } catch { continue; }
+
+            const type = String(evt?.type || '');
+            if (type === 'start') {
+              streamState.requestId = String(evt?.request_id || '');
+              els.requestIdPill.textContent = streamState.requestId ? ('req ' + streamState.requestId.slice(0, 8)) : 'req';
+              appendProgress('Started ' + els.requestIdPill.textContent);
+              continue;
+            }
+
+            if (type === 'status') {
+              const msg = String(evt?.message || '');
+              const step = String(evt?.step || '');
+              els.queryStatus.textContent = msg || (step ? ('Step: ' + step) : '');
+              appendProgress(step ? (step + ': ' + msg) : msg);
+              if (step === 'draft') els.draftStatePill.textContent = 'streaming';
+              continue;
+            }
+
+            if (type === 'retrieved') {
+              const chunks = Array.isArray(evt?.chunks) ? evt.chunks : [];
+              renderChunks(chunks, { container: els.retrievedChunks, countPill: els.retrievedCountPill });
+              els.retrievedDetails.open = true;
+              appendProgress('Retrieved ' + String(evt?.count ?? chunks.length) + ' chunks');
+              continue;
+            }
+
+            if (type === 'reranked') {
+              const chunks = Array.isArray(evt?.chunks) ? evt.chunks : [];
+              renderChunks(chunks, { container: els.chunks, countPill: els.chunkCountPill });
+              appendProgress('Reranked ' + String(evt?.count ?? chunks.length) + ' chunks');
+              continue;
+            }
+
+            if (type === 'draft_delta') {
+              const delta = String(evt?.delta || '');
+              if (delta) {
+                draftText += delta;
+                scheduleDraftRender();
+              }
+              continue;
+            }
+
+            if (type === 'draft_done') {
+              els.draftStatePill.textContent = 'done';
+              appendProgress('Draft ready');
+              continue;
+            }
+
+            if (type === 'final_delta') {
+              const delta = String(evt?.delta || '');
+              if (delta) {
+                finalText += delta;
+                scheduleFinalRender();
+              }
+              continue;
+            }
+
+            if (type === 'cancelled') {
+              els.queryStatus.textContent = 'Cancelled.';
+              appendProgress('Cancelled');
+              break;
+            }
+
+            if (type === 'error') {
+              const err = String(evt?.error || 'Unknown error');
+              els.queryStatus.textContent = 'Error: ' + err;
+              appendProgress('Error: ' + err);
+              break;
+            }
+
+            if (type === 'done') {
+              const data = evt?.response || {};
+              lastQueryResponse = data;
+              els.queryStatus.textContent = '';
+
+              // Re-render with the final, full payload (includes full chunk text/context).
+              els.draftStatePill.textContent = 'done';
+              draftText = String(data.draft_answer ?? draftText);
+              finalText = String(data.final_answer ?? finalText);
+              els.draftAnswer.innerHTML = renderMarkdown(draftText);
+              els.finalAnswer.innerHTML = renderMarkdown(finalText);
+
+              const chunks = data.top_chunks || [];
+              renderChunks(chunks, { container: els.chunks, countPill: els.chunkCountPill });
+              lastChunksBySource = buildChunksBySource(chunks);
+              populateSourceSelect();
+
+              els.copyAnswerBtn.disabled = !String(finalText || '').trim();
+              els.copyDebugBtn.disabled = false;
+
+              // Refresh persisted history so the new entry shows up with its server timestamp/id.
+              await loadHistoryFromServer();
+              appendProgress('Done in ' + String(evt?.elapsed_ms ?? '') + 'ms');
+              break;
+            }
+          }
+        }
       } catch (e) {
-        console.error(e);
-        els.queryStatus.textContent = 'Error: ' + e;
+        if (String(e?.name || '') === 'AbortError') {
+          els.queryStatus.textContent = 'Cancelled.';
+          appendProgress('Cancelled');
+        } else {
+          console.error(e);
+          els.queryStatus.textContent = 'Error: ' + e;
+          appendProgress('Error: ' + e);
+        }
       } finally {
         els.queryBtn.disabled = false;
+        els.stopBtn.disabled = true;
+        if (streamState?.controller?.signal?.aborted) {
+          // Keep the request id pill for debugging.
+        } else {
+          els.requestIdPill.textContent = streamState?.requestId ? ('req ' + streamState.requestId.slice(0, 8)) : 'idle';
+        }
+        if (activeStream === streamState) activeStream = null;
       }
     }
 
@@ -896,6 +1121,10 @@
         return;
       }
       await doQuery(q);
+    });
+
+    els.stopBtn.addEventListener('click', async () => {
+      await stopActiveQuery();
     });
 
     els.historyFilter.addEventListener('input', () => renderHistory());
