@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Financial RAG</title>
+  <title>Andromeda</title>
   <style>
     :root{
       --bg: #0b1020;
@@ -250,8 +250,8 @@
   <header>
     <div class="topbar">
       <div class="brand">
-        <h1>Financial RAG</h1>
-        <div class="subtitle">Ask questions, inspect retrieved chunks, and open source docs.</div>
+        <h1>Andromeda</h1>
+        <div class="subtitle">A grounded question-answering agent for your investment needs.</div>
       </div>
       <div class="actions">
         <span class="pill" id="healthPill">checking /health…</span>
@@ -270,9 +270,6 @@
         </div>
         <div class="panelBody" style="padding-bottom: 0.75rem;">
           <input id="historyFilter" type="text" placeholder="Filter by question text…" />
-          <div class="help" style="margin-top: 0.6rem;">
-            Persisted on the server at <span class="code" id="historyPath">(loading…)</span> and also cached in your browser.
-          </div>
         </div>
         <div class="historyList" id="historyList"></div>
       </section>
@@ -305,7 +302,6 @@
 	                  <summary>
 	                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
 	                      <strong>Advanced options</strong>
-	                      <span class="pill">top_k, max_tokens</span>
 	                    </div>
 	                    <div class="muted" style="font-size: 0.86rem;">toggle</div>
 	                  </summary>
@@ -372,8 +368,7 @@
 	                <div style="margin-top: 1rem;">
 	                  <h3 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Reranked chunks (used for answer)</h3>
 	                  <div class="help" style="margin-bottom: 0.6rem;">
-	                    Use “Open source” to view the underlying PDF/Markdown. For local paths outside the allowlist, set
-	                    <span class="code">SOURCE_ROOTS</span> on the server.
+	                    Use “Open source” to view the source document.
 	                  </div>
 	                  <div id="chunks"></div>
 
