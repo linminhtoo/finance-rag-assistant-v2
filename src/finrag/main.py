@@ -79,11 +79,19 @@ class RAGService:
         # Serialize top chunks for the frontend
         top_chunks = [
             TopChunk(
+                chunk_id=sc.chunk.id,
                 doc_id=sc.chunk.doc_id,
                 page_no=sc.chunk.page_no,
                 headings=sc.chunk.headings,
                 score=sc.score,
                 preview=sc.chunk.text[:300],
+                source=sc.chunk.source,
+                text=sc.chunk.text,
+                context=(
+                    str((sc.chunk.metadata or {}).get(self._context_key))
+                    if (sc.chunk.metadata or {}).get(self._context_key) is not None
+                    else None
+                ),
             )
             for sc in reranked
         ]

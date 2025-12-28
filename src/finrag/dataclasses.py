@@ -53,8 +53,12 @@ class TopChunk:
     A top chunk returned in a query response.
     """
 
+    chunk_id: str
     doc_id: str
     page_no: int | None
     headings: list[str]
     score: float
     preview: str  # first N chars of text
+    source: str  # original file/URL
+    text: str | None = None  # optional full chunk text (can be large)
+    context: str | None = None  # optional situated/enriched context text
