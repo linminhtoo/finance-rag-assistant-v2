@@ -1,4 +1,5 @@
 import argparse
+import atexit
 import json
 import multiprocessing as mp
 import os
@@ -10,11 +11,10 @@ import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Annotated, Any, List, cast
+from typing import Annotated, Any, List, Mapping, cast
 
 from dotenv import load_dotenv
 import openai
-import PIL
 import weasyprint
 from langsmith.wrappers import wrap_openai
 from loguru import logger
@@ -22,14 +22,16 @@ from marker.config.parser import ConfigParser
 from marker.converters.pdf import PdfConverter
 from marker.logger import get_logger
 from marker.models import create_model_dict
-
 from marker.renderers.markdown import MarkdownOutput, MarkdownRenderer
 from marker.schema.blocks import Block
 from marker.services.openai import OpenAIService as BaseOpenAIService
+from marker.settings import settings
+from marker.telemetry import sanitize_headers
 from openai import APITimeoutError, RateLimitError
-from PIL import ImageStat
+from PIL import Image, ImageStat
 from pydantic import BaseModel
 from tqdm import tqdm
+from weasyprint.text.fonts import FontConfiguration
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -38,6 +40,7 @@ marker_logger = get_logger()
 _worker_converter: PdfConverter | None = None
 _worker_markdown_renderer: MarkdownRenderer | None = None
 _worker_renderer_config: dict | None = None
+_langsmith_flush_registered = False
 
 
 class CustomOpenAIService(BaseOpenAIService):
@@ -69,6 +72,7 @@ class CustomOpenAIService(BaseOpenAIService):
         int, "If > 0, skip the LLM call when the estimated prompt tokens exceed this value (best-effort)."
     ] = 0
     max_image_long_side: Annotated[int, "If >0, downscale images so max(width,height) <= this before sending."] = 0
+    # NOTE: marker does have its own fn to check for blank images but it uses those during OCR, rather than LLMTableProcessor
     skip_blank_images: Annotated[bool, "If true, skip LLM calls when all images look blank/uniform."] = False
     blank_image_variance_threshold: Annotated[
         float, "Grayscale variance threshold used to treat an image as blank (lower = stricter)."
@@ -92,7 +96,7 @@ class CustomOpenAIService(BaseOpenAIService):
         return routes.get(schema_key, {})
 
     @staticmethod
-    def _downscale_image(image: PIL.Image.Image, max_long_side: int) -> PIL.Image.Image:  # type: ignore[type-arg]
+    def _downscale_image(image: Image.Image, max_long_side: int) -> Image.Image:
         if max_long_side <= 0:
             return image
         width, height = image.size
@@ -103,7 +107,7 @@ class CustomOpenAIService(BaseOpenAIService):
         return img_copy
 
     @staticmethod
-    def _looks_blank(image: PIL.Image.Image, variance_threshold: float) -> bool:  # type: ignore[type-arg]
+    def _looks_blank(image: Image.Image, variance_threshold: float) -> bool:
         try:
             stat = ImageStat.Stat(image.convert("L"))
             var = float(stat.var[0]) if stat.var else 0.0
@@ -113,16 +117,16 @@ class CustomOpenAIService(BaseOpenAIService):
 
     def _prepare_images(
         self,
-        image: PIL.Image.Image | List[PIL.Image.Image] | None,  # type: ignore[type-arg]
+        image: Image.Image | List[Image.Image] | None,
         *,
         max_long_side: int,
         skip_blank_images: bool,
         blank_variance_threshold: float,
-    ) -> PIL.Image.Image | List[PIL.Image.Image] | None:  # type: ignore[type-arg]
+    ) -> Image.Image | List[Image.Image] | None:
         if not image:
             return None
 
-        images: list[PIL.Image.Image] = image if isinstance(image, list) else [image]  # type: ignore[type-arg]
+        images: list[Image.Image] = image if isinstance(image, list) else [image]
         processed = [self._downscale_image(img, max_long_side) for img in images]
 
         if skip_blank_images and processed:
@@ -136,11 +140,12 @@ class CustomOpenAIService(BaseOpenAIService):
     def __call__(
         self,
         prompt: str,
-        image: PIL.Image.Image | List[PIL.Image.Image] | None,  # type: ignore[type-arg]
+        image: Image.Image | List[Image.Image] | None,
         block: Block | None,
         response_schema: type[BaseModel],
         max_retries: int | None = None,  # ignored
         timeout: int | None = None,  # ignored
+        extra_headers: Mapping[str, str] | None = None,
     ):
         request_id = uuid.uuid4().hex
         start_time = time.perf_counter()
@@ -185,6 +190,15 @@ class CustomOpenAIService(BaseOpenAIService):
             messages.append({"role": "system", "content": [{"type": "text", "text": self.openai_system_prompt}]})
         messages.append({"role": "user", "content": [*image_data, {"type": "text", "text": prompt}]})
 
+        request_headers = {
+            "X-Title": "Marker",
+            "HTTP-Referer": "https://github.com/datalab-to/marker",
+            "X-Request-ID": request_id,
+        }
+        if block is not None and "X-Marker-Block" not in (extra_headers or {}):
+            request_headers["X-Marker-Block"] = str(block.id)
+        request_headers.update(sanitize_headers(extra_headers))
+
         if self.log_prompt_token_count or max_prompt_tokens > 0:
             try:
                 from finrag.hf_token_count import count_tokens_openai_messages
@@ -197,13 +211,14 @@ class CustomOpenAIService(BaseOpenAIService):
                     count_images=self.hf_count_image_tokens,
                 )
                 marker_logger.info(
-                    "CustomOpenAIService[%s] prompt_tokens_est total=%s text=%s image=%s method=%s max_length=%s warnings=%s",
+                    "CustomOpenAIService[%s] prompt_tokens_est total=%s text=%s image=%s method=%s max_length=%s schema=%s warnings=%s",
                     request_id,
                     token_info.total_tokens,
                     token_info.text_tokens,
                     token_info.image_tokens,
                     token_info.method,
                     token_info.model_max_length,
+                    self._schema_key(response_schema),
                     token_info.warnings if token_info.warnings else None,
                 )
                 # TODO: we can't do block.update_metadata bcos BlockMetadata doesn't have these new fields
@@ -232,9 +247,10 @@ class CustomOpenAIService(BaseOpenAIService):
                     timeout=timeout,
                     response_format=response_schema,
                     temperature=temperature,
+                    extra_headers=request_headers,
                     # TODO: try guided JSON to further robustify the structured output
-                    # need to double check cuz not sure if it accepts flexible list of dicts
-                    # since we don't know how many corrections will be needed ahead of time
+                    # however, this might be a strictly vLLM feature which is not available on actual OpenAI API
+                    # hence, it may restrict usability
                     # extra_body={"guided_json": response_schema.model_json_schema()},
                 )
                 response_text = response.choices[0].message.content
@@ -247,7 +263,7 @@ class CustomOpenAIService(BaseOpenAIService):
                     block.update_metadata(llm_tokens_used=total_tokens, llm_request_count=1)
                 elapsed_s = time.perf_counter() - start_time
                 marker_logger.info(
-                    "CustomOpenAIService[%s] success elapsed_s=%.3f attempt=%s/%s prompt_tokens=%s completion_tokens=%s total_tokens=%s",
+                    "CustomOpenAIService[%s] success elapsed_s=%.3f attempt=%s/%s prompt_tokens=%s completion_tokens=%s total_tokens=%s schema=%s",
                     request_id,
                     elapsed_s,
                     tries,
@@ -255,6 +271,7 @@ class CustomOpenAIService(BaseOpenAIService):
                     response.usage.prompt_tokens,
                     response.usage.completion_tokens,
                     total_tokens,
+                    self._schema_key(response_schema),
                 )
                 return json.loads(response_text)
             except (APITimeoutError, RateLimitError) as e:
