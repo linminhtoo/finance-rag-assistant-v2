@@ -52,7 +52,7 @@
     .subtitle { color: var(--muted); font-size: 0.9rem; }
     .actions { display:flex; gap: 0.5rem; align-items:center; flex-wrap: wrap; }
     main {
-      max-width: 1800px;
+      max-width: 2300px;
       margin: 0 auto;
       padding: 1.25rem;
     }
@@ -62,7 +62,7 @@
       gap: 1rem;
       align-items: start;
     }
-    @media (max-width: 980px) {
+    @media (max-width: 1200px) {
       .grid { grid-template-columns: 1fr; }
     }
     .panel {
@@ -191,7 +191,7 @@
       gap: 0;
       align-items: stretch;
       min-width: 0;
-      --sourcesPaneWidth: 620px;
+      --sourcesPaneWidth: 900px;
     }
     .qaMain {
       flex: 1 1 auto;
@@ -290,6 +290,16 @@
 	              <form id="queryForm" style="margin-top: 1rem;">
 	                <label class="muted" for="question">Question</label>
 	                <textarea id="question" name="question" placeholder="e.g. Summarize the key risk factors mentioned in the latest filing for Company X."></textarea>
+
+                  <div style="margin-top: 0.75rem;">
+                    <div class="kv">
+                      <div>
+                        <label class="muted" for="genMode">Mode</label>
+                        <select id="genMode"></select>
+                        <div class="help" id="genModeHelp" style="margin-top: 0.35rem;"></div>
+                      </div>
+                    </div>
+                  </div>
 
 	                <details style="margin-top: 0.75rem;">
 	                  <summary>
@@ -430,6 +440,8 @@
 
       queryForm: $('queryForm'),
       question: $('question'),
+      genMode: $('genMode'),
+      genModeHelp: $('genModeHelp'),
       topKRetrieve: $('topKRetrieve'),
       topKRerank: $('topKRerank'),
       draftMaxTokens: $('draftMaxTokens'),
@@ -474,6 +486,10 @@
     const LS_UI = 'finrag_ui_v1';
     const DEFAULT_SOURCES_PANE_WIDTH_PX = 620;
 
+    let generationDefaultMode = 'normal';
+    let generationPresets = [];
+    let generationPresetByKey = new Map(); // key -> preset
+
     let historyItems = [];
     let activeEntry = null;
     let lastQueryResponse = null;
@@ -483,6 +499,65 @@
 
     function safeText(s) {
       return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function setGenerationPresets(payload) {
+      const presets = Array.isArray(payload?.presets) ? payload.presets : [];
+      generationDefaultMode = String(payload?.default_mode || 'normal').trim().toLowerCase() || 'normal';
+      generationPresets = presets.filter(p => p && typeof p === 'object' && p.key);
+      generationPresetByKey = new Map(generationPresets.map(p => [String(p.key).toLowerCase(), p]));
+    }
+
+    async function loadGenerationPresets() {
+      try {
+        const res = await fetch('/generation_presets');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        setGenerationPresets(data);
+      } catch (e) {
+        // Fallback if the backend endpoint isn't available (e.g., old server build).
+        setGenerationPresets({
+          default_mode: 'normal',
+          presets: [
+            { key: 'quick', label: 'Quick', description: 'Fast + concise. Skips reranking and verification.', top_k_retrieve: 12, top_k_rerank: 6, draft_max_tokens: 16384, final_max_tokens: 16384 },
+            { key: 'normal', label: 'Normal', description: 'Balanced quality/speed. Uses reranking + verification.', top_k_retrieve: 30, top_k_rerank: 8, draft_max_tokens: 65536, final_max_tokens: 32768 },
+            { key: 'thinking', label: 'Thinking', description: 'Higher recall + deeper report. Retrieves/reranks more and verifies.', top_k_retrieve: 40, top_k_rerank: 12, draft_max_tokens: 65536, final_max_tokens: 45000 },
+          ],
+        });
+      }
+    }
+
+    function populateModeSelect() {
+      if (!els.genMode) return;
+      els.genMode.innerHTML = '';
+      generationPresets.forEach((p) => {
+        const opt = document.createElement('option');
+        opt.value = String(p.key || '');
+        opt.textContent = String(p.label || p.key || '');
+        els.genMode.appendChild(opt);
+      });
+    }
+
+    function updateModeHelp(key) {
+      const p = generationPresetByKey.get(String(key || '').toLowerCase());
+      if (!els.genModeHelp) return;
+      if (!p) {
+        els.genModeHelp.textContent = '';
+        return;
+      }
+      els.genModeHelp.textContent = String(p.description || '');
+    }
+
+    function applyModePreset(key, { overwriteAdvanced = true } = {}) {
+      const p = generationPresetByKey.get(String(key || '').toLowerCase());
+      if (!p) return;
+      if (overwriteAdvanced) {
+        if (p.top_k_retrieve) els.topKRetrieve.value = p.top_k_retrieve;
+        if (p.top_k_rerank) els.topKRerank.value = p.top_k_rerank;
+        if (p.draft_max_tokens) els.draftMaxTokens.value = p.draft_max_tokens;
+        if (p.final_max_tokens) els.finalMaxTokens.value = p.final_max_tokens;
+      }
+      updateModeHelp(key);
     }
 
     function extractDocMeta(chunk) {
@@ -900,7 +975,9 @@
         const n = Number(v);
         return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
       };
+      const mode = String(els.genMode?.value || '').trim().toLowerCase() || generationDefaultMode || 'normal';
       return {
+        mode,
         top_k_retrieve: toInt(els.topKRetrieve.value, 30),
         top_k_rerank: toInt(els.topKRerank.value, 8),
         draft_max_tokens: toInt(els.draftMaxTokens.value, 65536),
@@ -910,6 +987,11 @@
 
     function applySettings(s) {
       if (!s) return;
+      const mode = String(s.mode || s.generation_mode || '').trim().toLowerCase() || generationDefaultMode || 'normal';
+      if (els.genMode) {
+        els.genMode.value = generationPresetByKey.has(mode) ? mode : generationDefaultMode;
+        updateModeHelp(els.genMode.value);
+      }
       if (s.top_k_retrieve) els.topKRetrieve.value = s.top_k_retrieve;
       if (s.top_k_rerank) els.topKRerank.value = s.top_k_rerank;
       if (s.draft_max_tokens) els.draftMaxTokens.value = s.draft_max_tokens;
@@ -953,11 +1035,13 @@
         const question = it?.request?.question || '(missing question)';
         const when = fmtDate(it?.created_at);
         const chunks = it?.response?.top_chunks?.length ?? 0;
+        const mode = String(it?.request?.mode || '').trim().toLowerCase();
         div.innerHTML = `
           <div class="historyQ">${safeText(question)}</div>
           <div class="historyMeta">
             <span>${safeText(when)}</span>
             <span class="pill">${chunks} chunks</span>
+            ${mode ? `<span class="pill">mode: ${safeText(mode)}</span>` : ``}
           </div>
         `;
         div.addEventListener('click', () => {
@@ -1405,8 +1489,23 @@
       await renderSourceViewer(els.sourceSelect.value, null);
     });
 
-    (function init() {
-      applySettings(readSettings());
+    els.genMode?.addEventListener('change', () => {
+      const mode = String(els.genMode.value || '').trim().toLowerCase();
+      applyModePreset(mode, { overwriteAdvanced: true });
+      writeSettings(currentSettings());
+    });
+
+    (async function init() {
+      await loadGenerationPresets();
+      populateModeSelect();
+
+      const saved = readSettings() || {};
+      const savedMode = String(saved.mode || saved.generation_mode || '').trim().toLowerCase();
+      const mode = generationPresetByKey.has(savedMode) ? savedMode : generationDefaultMode;
+      if (els.genMode) els.genMode.value = mode;
+      applyModePreset(mode, { overwriteAdvanced: true });
+      applySettings(saved);
+
       applyUi(readUi());
       setupSourcesSplitter();
       populateSourceSelect();
