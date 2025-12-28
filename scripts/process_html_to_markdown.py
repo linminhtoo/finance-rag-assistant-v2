@@ -404,6 +404,7 @@ class Args:
     gpu_ids: str
     year_cutoff: int | None
     disable_forms: bool
+    disable_table_merge: bool
     drop_front_pages: int
     drop_back_pages: int
     strip_repeated_toc: bool
@@ -510,6 +511,20 @@ def parse_args() -> Args:
         dest="disable_forms",
         action="store_false",
         help="Enable `marker.processors.llm.llm_form.LLMFormProcessor` (process forms).",
+    )
+    table_merge_group = parser.add_mutually_exclusive_group()
+    table_merge_group.add_argument(
+        "--disable-table-merge",
+        dest="disable_table_merge",
+        action="store_true",
+        default=True,
+        help="Disable `marker.processors.llm.llm_table_merge.LLMTableMergeProcessor` (default).",
+    )
+    table_merge_group.add_argument(
+        "--enable-table-merge",
+        dest="disable_table_merge",
+        action="store_false",
+        help="Enable `marker.processors.llm.llm_table_merge.LLMTableMergeProcessor`.",
     )
     parser.add_argument(
         "--drop-front-pages",
@@ -655,6 +670,7 @@ def parse_args() -> Args:
         gpu_ids=args.gpu_ids,
         year_cutoff=args.year_cutoff,
         disable_forms=args.disable_forms,
+        disable_table_merge=args.disable_table_merge,
         drop_front_pages=args.drop_front_pages,
         drop_back_pages=args.drop_back_pages,
         strip_repeated_toc=args.strip_repeated_toc,
@@ -1178,12 +1194,16 @@ def main():
         schema_routes[sectionheader_schema_key]["hf_model_id"] = args.sectionheader_hf_model_id
 
     processors_override: str | None = None
-    if args.disable_forms:
+    if args.disable_forms or args.disable_table_merge:
         from marker.converters.pdf import PdfConverter as _PdfConverter
         from marker.processors import BaseProcessor
         from marker.util import classes_to_strings
 
-        disabled = {"marker.processors.llm.llm_form.LLMFormProcessor"}
+        disabled = set()
+        if args.disable_forms:
+            disabled.add("marker.processors.llm.llm_form.LLMFormProcessor")
+        if args.disable_table_merge:
+            disabled.add("marker.processors.llm.llm_table_merge.LLMTableMergeProcessor")
         default_processors = cast(list[type[BaseProcessor]], list(_PdfConverter.default_processors))
         filtered_processors = [p for p in default_processors if f"{p.__module__}.{p.__name__}" not in disabled]
         processors_override = ",".join(classes_to_strings(filtered_processors))
