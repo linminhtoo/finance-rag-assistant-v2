@@ -4,14 +4,16 @@ import uuid
 import mimetypes
 import json
 import sys
+import asyncio
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel
 
@@ -19,13 +21,14 @@ from finrag.chunking import DoclingHybridChunker
 from finrag.dataclasses import TopChunk
 from finrag.llm_clients import get_llm_client
 from finrag.context_support import apply_context_strategy, context_builder_from_metadata
-from finrag.qa import answer_question_two_stage
+from finrag.qa import answer_question_two_stage, build_draft_prompt, build_refine_prompt
 from finrag.retriever import (
     CrossEncoderReranker,
     QdrantHybridRetriever,
     MilvusContextualRetriever,
     build_milvus_embedding_functions,
 )
+from finrag.streaming import TextDeltaBatcher, iter_chat_deltas, ndjson_bytes, stream_chunks_max, stream_chunks_preview_chars, stream_draft_enabled
 
 
 # -------------------------------------------------------------------
@@ -39,6 +42,10 @@ class QueryRequest(BaseModel):
     top_k_rerank: int = 8
     draft_max_tokens: int = 65_536
     final_max_tokens: int = 32_768
+
+
+class QueryStreamRequest(QueryRequest):
+    request_id: str | None = None
 
 
 class QueryResponse(BaseModel):
@@ -259,6 +266,26 @@ class RAGService:
         self.chunker_ocr = DoclingHybridChunker(use_mistral_ocr=True)
         self.chunker_pdf = DoclingHybridChunker(use_mistral_ocr=False)
 
+    def _serialize_top_chunks(self, reranked) -> list[TopChunk]:
+        return [
+            TopChunk(
+                chunk_id=sc.chunk.id,
+                doc_id=sc.chunk.doc_id,
+                page_no=sc.chunk.page_no,
+                headings=sc.chunk.headings,
+                score=sc.score,
+                preview=sc.chunk.text[:300],
+                source=sc.chunk.source,
+                text=sc.chunk.text,
+                context=(
+                    str((sc.chunk.metadata or {}).get(self._context_key))
+                    if (sc.chunk.metadata or {}).get(self._context_key) is not None
+                    else None
+                ),
+            )
+            for sc in reranked
+        ]
+
     def ingest_document(self, path: str, use_mistral_ocr: bool) -> str:
         """
         Ingest a single PDF at `path` using either:
@@ -311,27 +338,7 @@ class RAGService:
             self.llm, question, reranked, draft_max_tokens=draft_max_tokens, final_max_tokens=final_max_tokens
         )
 
-        # Serialize top chunks for the frontend
-        top_chunks = [
-            TopChunk(
-                chunk_id=sc.chunk.id,
-                doc_id=sc.chunk.doc_id,
-                page_no=sc.chunk.page_no,
-                headings=sc.chunk.headings,
-                score=sc.score,
-                preview=sc.chunk.text[:300],
-                source=sc.chunk.source,
-                text=sc.chunk.text,
-                context=(
-                    str((sc.chunk.metadata or {}).get(self._context_key))
-                    if (sc.chunk.metadata or {}).get(self._context_key) is not None
-                    else None
-                ),
-            )
-            for sc in reranked
-        ]
-
-        return QueryResponse(draft_answer=draft, final_answer=final, top_chunks=top_chunks)
+        return QueryResponse(draft_answer=draft, final_answer=final, top_chunks=self._serialize_top_chunks(reranked))
 
 
 # -------------------------------------------------------------------
@@ -354,6 +361,36 @@ app.add_middleware(
 )
 
 rag_service = RAGService(storage_path=os.getenv("QDRANT_STORAGE_PATH"))
+
+_CANCEL_LOCK = threading.Lock()
+_CANCEL_EVENTS: dict[str, threading.Event] = {}
+
+
+def _register_cancel_event(request_id: str) -> threading.Event:
+    with _CANCEL_LOCK:
+        evt = _CANCEL_EVENTS.get(request_id)
+        if evt is None:
+            evt = threading.Event()
+            _CANCEL_EVENTS[request_id] = evt
+        return evt
+
+
+def _cancel_request(request_id: str) -> bool:
+    with _CANCEL_LOCK:
+        evt = _CANCEL_EVENTS.get(request_id)
+    if evt is None:
+        return False
+    evt.set()
+    return True
+
+
+def _cleanup_cancel_event(request_id: str) -> None:
+    with _CANCEL_LOCK:
+        _CANCEL_EVENTS.pop(request_id, None)
+
+
+class CancelRequest(BaseModel):
+    request_id: str
 
 
 @app.get("/health")
@@ -397,6 +434,189 @@ async def query_docs(req: QueryRequest):
     )
     _append_history(req=req, res=result)
     return result
+
+
+def _stream_chunk_dict(sc, *, preview_chars: int, text_chars: int) -> dict:
+    text = (sc.chunk.text or "").strip()
+    preview = text[:preview_chars] if preview_chars > 0 else ""
+    chunk_text = text[:text_chars] if text_chars > 0 else ""
+    return {
+        "chunk_id": sc.chunk.id,
+        "doc_id": sc.chunk.doc_id,
+        "page_no": sc.chunk.page_no,
+        "headings": sc.chunk.headings,
+        "score": sc.score,
+        "preview": preview,
+        "source": sc.chunk.source,
+        "text": chunk_text,
+    }
+
+
+@app.post("/cancel")
+def cancel(req: CancelRequest):
+    ok = _cancel_request((req.request_id or "").strip())
+    return {"status": "ok" if ok else "not_found"}
+
+
+@app.post("/query_stream")
+async def query_docs_stream(req: QueryStreamRequest, request: Request):
+    request_id = (req.request_id or "").strip() or str(uuid.uuid4())
+    cancel_evt = _register_cancel_event(request_id)
+    started_ms = int(time.time() * 1000)
+
+    preview_chars = max(0, stream_chunks_preview_chars())
+    max_chunks = max(0, stream_chunks_max())
+    try:
+        text_chars = int((os.getenv("FINRAG_STREAM_CHUNKS_TEXT_CHARS", "1000") or "1000").strip())
+    except ValueError:
+        text_chars = 1000
+    text_chars = max(0, text_chars)
+
+    async def gen():
+        full_draft = ""
+        full_final = ""
+
+        def is_cancelled() -> bool:
+            return cancel_evt.is_set()
+
+        def set_cancelled() -> None:
+            cancel_evt.set()
+
+        try:
+            yield ndjson_bytes({"type": "start", "request_id": request_id})
+
+            yield ndjson_bytes({"type": "status", "step": "retrieve", "message": "Retrieving chunks…"})
+            hybrid = await asyncio.to_thread(
+                rag_service.retriever.retrieve_hybrid,
+                req.question,
+                top_k_semantic=req.top_k_retrieve,
+                top_k_bm25=req.top_k_retrieve,
+                top_k_final=req.top_k_retrieve,
+            )
+
+            if await request.is_disconnected():
+                set_cancelled()
+            if is_cancelled():
+                yield ndjson_bytes({"type": "cancelled", "request_id": request_id, "elapsed_ms": 0})
+                return
+
+            retrieved_payload = [_stream_chunk_dict(sc, preview_chars=preview_chars, text_chars=text_chars) for sc in hybrid]
+            if max_chunks:
+                retrieved_payload = retrieved_payload[:max_chunks]
+            yield ndjson_bytes({"type": "retrieved", "count": len(hybrid), "chunks": retrieved_payload})
+
+            yield ndjson_bytes({"type": "status", "step": "rerank", "message": "Reranking chunks…"})
+            reranked = await asyncio.to_thread(rag_service.reranker.rerank, req.question, hybrid, top_k=req.top_k_rerank)
+
+            if await request.is_disconnected():
+                set_cancelled()
+            if is_cancelled():
+                yield ndjson_bytes({"type": "cancelled", "request_id": request_id, "elapsed_ms": 0})
+                return
+
+            reranked_payload = [_stream_chunk_dict(sc, preview_chars=preview_chars, text_chars=text_chars) for sc in reranked]
+            yield ndjson_bytes({"type": "reranked", "count": len(reranked), "chunks": reranked_payload})
+
+            yield ndjson_bytes({"type": "status", "step": "draft", "message": "Generating draft…", "is_draft": True})
+            draft_prompt = build_draft_prompt(req.question, reranked, draft_max_tokens=req.draft_max_tokens)
+            if stream_draft_enabled():
+                batcher = TextDeltaBatcher.from_env()
+                async for delta in iter_chat_deltas(
+                    rag_service.llm,
+                    draft_prompt,  # type: ignore[arg-type]
+                    temperature=0.1,
+                    is_cancelled=is_cancelled,
+                    set_cancelled=set_cancelled,
+                    is_disconnected=request.is_disconnected,
+                ):
+                    full_draft += delta
+                    batcher.add(delta)
+                    out = batcher.pop_ready()
+                    if out:
+                        yield ndjson_bytes({"type": "draft_delta", "delta": out})
+                    if is_cancelled():
+                        break
+                out = batcher.pop_all()
+                if out:
+                    yield ndjson_bytes({"type": "draft_delta", "delta": out})
+            else:
+                full_draft = await asyncio.to_thread(rag_service.llm.chat, draft_prompt, 0.1)
+
+            yield ndjson_bytes({"type": "draft_done", "chars": len(full_draft)})
+
+            if await request.is_disconnected():
+                set_cancelled()
+            if is_cancelled():
+                yield ndjson_bytes(
+                    {"type": "cancelled", "request_id": request_id, "elapsed_ms": int(time.time() * 1000) - started_ms}
+                )
+                return
+
+            yield ndjson_bytes({"type": "status", "step": "final", "message": "Generating final answer…", "is_draft": False})
+            refine_prompt = build_refine_prompt(req.question, full_draft, reranked, final_max_tokens=req.final_max_tokens)
+            batcher = TextDeltaBatcher.from_env()
+            async for delta in iter_chat_deltas(
+                rag_service.llm,
+                refine_prompt,  # type: ignore[arg-type]
+                temperature=0.0,
+                is_cancelled=is_cancelled,
+                set_cancelled=set_cancelled,
+                is_disconnected=request.is_disconnected,
+            ):
+                full_final += delta
+                batcher.add(delta)
+                out = batcher.pop_ready()
+                if out:
+                    yield ndjson_bytes({"type": "final_delta", "delta": out})
+                if is_cancelled():
+                    break
+            out = batcher.pop_all()
+            if out:
+                yield ndjson_bytes({"type": "final_delta", "delta": out})
+
+            if await request.is_disconnected():
+                set_cancelled()
+            if is_cancelled():
+                yield ndjson_bytes(
+                    {
+                        "type": "cancelled",
+                        "request_id": request_id,
+                        "elapsed_ms": int(time.time() * 1000) - started_ms,
+                        "draft": full_draft,
+                        "final_partial": full_final,
+                    }
+                )
+                return
+
+            res = QueryResponse(
+                draft_answer=full_draft,
+                final_answer=full_final,
+                top_chunks=rag_service._serialize_top_chunks(reranked),
+            )
+            _append_history(req=QueryRequest(**req.dict(exclude={"request_id"})), res=res)
+
+            yield ndjson_bytes(
+                {
+                    "type": "done",
+                    "request_id": request_id,
+                    "elapsed_ms": int(time.time() * 1000) - started_ms,
+                    "response": jsonable_encoder(res),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Streaming query failed: %r", exc)
+            yield ndjson_bytes(
+                {
+                    "type": "error",
+                    "request_id": request_id,
+                    "error": str(exc),
+                    "elapsed_ms": int(time.time() * 1000) - started_ms,
+                }
+            )
+        finally:
+            _cleanup_cancel_event(request_id)
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
 
 
 def _project_root() -> Path:
