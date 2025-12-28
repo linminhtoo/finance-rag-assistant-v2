@@ -375,6 +375,14 @@ class Args:
     output_dir: str
     openai_base_url: str
     openai_model: str
+    analysis_style: str
+    sectionheader_analysis_style: str
+    sectionheader_rewrite_retries: int
+    sectionheader_max_chunk_tokens: int
+    sectionheader_chunk_tokenizer_hf_model_id: str
+    sectionheader_neighbor_text_max_blocks: int
+    sectionheader_neighbor_text_max_chars: int
+    sectionheader_recent_headers_max_count: int
     sectionheader_openai_base_url: str
     sectionheader_openai_model: str
     sectionheader_hf_model_id: str
@@ -411,6 +419,12 @@ def parse_args() -> Args:
         "--output-dir", default="outputs", help="Root output directory (writes `pdf/` and `markdown/` subfolders)."
     )
     parser.add_argument("--openai-model", required=True, help="Model name for OpenAI-compatible API.")
+    parser.add_argument(
+        "--analysis-style",
+        default="summary",
+        choices=("summary", "deep", "auto"),
+        help="How to structure LLM analysis: 'summary', 'deep', or 'auto' (default: summary).",
+    )
     parser.add_argument("--openai-system-prompt", default="", help="Optional system prompt for the LLM.")
     parser.add_argument("--openai-temperature", type=float, default=0.7, help="Sampling temperature.")
     parser.add_argument(
@@ -528,6 +542,50 @@ def parse_args() -> Args:
         help="Optional model override for `LLMSectionHeaderProcessor` (text-only) requests.",
     )
     parser.add_argument(
+        "--sectionheader-analysis-style",
+        default="deep",
+        choices=("summary", "auto", "deep"),
+        help="How to structure LLM analysis for `LLMSectionHeaderProcessor` (default: deep).",
+    )
+    parser.add_argument(
+        "--sectionheader-rewrite-retries",
+        type=int,
+        default=1,
+        help="How many extra section header rewrite attempts to allow when confidence is low (default: 1).",
+    )
+    parser.add_argument(
+        "--sectionheader-max-chunk-tokens",
+        type=int,
+        default=8192,
+        help="Max prompt tokens per section header chunk (0 disables chunking) (default: 8192).",
+    )
+    parser.add_argument(
+        "--sectionheader-chunk-tokenizer-hf-model-id",
+        default="",
+        help=(
+            "Optional HuggingFace tokenizer model id for section header chunking token counts "
+            "(falls back to --sectionheader-hf-model-id, then --hf-model-id)."
+        ),
+    )
+    parser.add_argument(
+        "--sectionheader-neighbor-text-max-blocks",
+        type=int,
+        default=1,
+        help="Max number of neighboring text blocks to include before/after each header (default: 1).",
+    )
+    parser.add_argument(
+        "--sectionheader-neighbor-text-max-chars",
+        type=int,
+        default=280,
+        help="Max chars of neighboring text to include per side (before/after) (default: 280).",
+    )
+    parser.add_argument(
+        "--sectionheader-recent-headers-max-count",
+        type=int,
+        default=20,
+        help="How many recently-processed headers to include as context for later chunks (default: 20).",
+    )
+    parser.add_argument(
         "--sectionheader-token-count-hf-model-id",
         "--sectionheader-hf-model-id",
         default="",
@@ -561,6 +619,14 @@ def parse_args() -> Args:
         output_dir=args.output_dir,
         openai_base_url=openai_base_url,
         openai_model=args.openai_model,
+        analysis_style=args.analysis_style,
+        sectionheader_analysis_style=args.sectionheader_analysis_style,
+        sectionheader_rewrite_retries=args.sectionheader_rewrite_retries,
+        sectionheader_max_chunk_tokens=args.sectionheader_max_chunk_tokens,
+        sectionheader_chunk_tokenizer_hf_model_id=args.sectionheader_chunk_tokenizer_hf_model_id,
+        sectionheader_neighbor_text_max_blocks=args.sectionheader_neighbor_text_max_blocks,
+        sectionheader_neighbor_text_max_chars=args.sectionheader_neighbor_text_max_chars,
+        sectionheader_recent_headers_max_count=args.sectionheader_recent_headers_max_count,
         sectionheader_openai_base_url=sectionheader_openai_base_url,
         sectionheader_openai_model=args.sectionheader_openai_model,
         sectionheader_hf_model_id=args.sectionheader_token_count_hf_model_id,
@@ -1136,6 +1202,19 @@ def main():
         # LLM requests (not "batching" into a single request).
         "max_concurrency": args.max_concurrency,
         "LLMTableProcessor_max_concurrency": args.max_concurrency,
+        "LLMTableProcessor_analysis_style": args.analysis_style,
+        "LLMSectionHeaderProcessor_analysis_style": args.sectionheader_analysis_style,
+        "LLMSectionHeaderProcessor_max_rewrite_retries": args.sectionheader_rewrite_retries,
+        "LLMSectionHeaderProcessor_max_chunk_tokens": args.sectionheader_max_chunk_tokens,
+        "LLMSectionHeaderProcessor_chunk_tokenizer_hf_model_id": (
+            args.sectionheader_chunk_tokenizer_hf_model_id
+            or args.sectionheader_hf_model_id
+            or args.hf_model_id
+        ),
+        "LLMSectionHeaderProcessor_neighbor_text_max_blocks": args.sectionheader_neighbor_text_max_blocks,
+        "LLMSectionHeaderProcessor_neighbor_text_max_chars": args.sectionheader_neighbor_text_max_chars,
+        "LLMSectionHeaderProcessor_recent_headers_max_count": args.sectionheader_recent_headers_max_count,
+        "LLMPageCorrectionProcessor_analysis_style": args.analysis_style,
         "disable_image_extraction": True,
         "force_ocr": False,
     }
