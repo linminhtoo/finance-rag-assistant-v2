@@ -138,6 +138,22 @@
       line-height: 1.45rem;
       font-size: 0.98rem;
     }
+    #answerSplit { display: flex; flex-direction: column; min-height: 0; }
+    #answerPane { min-height: 0; overflow: auto; padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); }
+    #chunksPane { min-height: 0; overflow: auto; padding-top: 0.9rem; }
+    .citationLink{
+      font-family: var(--mono);
+      font-size: 0.88em;
+      padding: 0.05rem 0.35rem;
+      border-radius: 10px;
+      border: 1px solid rgba(147,197,253,0.35);
+      background: rgba(147,197,253,0.10);
+      white-space: nowrap;
+    }
+    .citationLink:hover{
+      background: rgba(147,197,253,0.16);
+      text-decoration: none;
+    }
     .markdown p { margin: 0.55rem 0; }
     .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 0.8rem 0 0.4rem 0; }
     .markdown h1 { font-size: 1.25rem; }
@@ -231,7 +247,10 @@
 	      #askPanel .panelBody { height: calc(100vh - 170px); overflow: hidden; }
 	      #askPanel .qaSplit { height: 100%; }
 	      #askPanel .qaMain { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-	      #askPanel #answerBlock { flex: 1 1 auto; min-height: 0; overflow: auto; padding-right: 0.5rem; }
+	      #askPanel #answerBlock { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+	      #askPanel #answerSplit { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+	      #askPanel #answerPane { flex: 0 0 54%; min-height: 0; overflow: auto; padding-right: 0.5rem; padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); }
+	      #askPanel #chunksPane { flex: 1 1 auto; min-height: 0; overflow: auto; padding-right: 0.5rem; padding-top: 0.9rem; }
 	      #askPanel .qaSources { min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 	      #askPanel .qaSources details { min-height: 0; }
 	      #askPanel .qaSources details[open] { height: 100%; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -243,6 +262,8 @@
       .qaMain { padding-right: 0; }
       .qaSplitter { display: none; }
       .qaSources { flex: 0 0 auto; min-width: 0; max-width: none; width: 100%; padding-left: 0; margin-top: 1rem; }
+      #answerPane { max-height: 52vh; }
+      #chunksPane { max-height: 60vh; }
     }
   </style>
 </head>
@@ -338,34 +359,37 @@
               </form>
 
               <div id="answerBlock" style="display:none; margin-top: 1rem;">
-                <div class="row" style="margin-bottom: 0.25rem;">
-                  <h3 style="margin: 0; font-size: 1rem;">Progress</h3>
-                  <div class="spacer"></div>
-                  <span class="pill" id="requestIdPill">idle</span>
-                </div>
-                <div class="chunkText" id="progressLog" style="max-height: 18vh; margin-bottom: 0.9rem;"></div>
-
-                <details id="draftDetails" style="margin-bottom: 0.9rem;">
-                  <summary>
-                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
-                      <strong>Draft</strong>
-                      <span class="pill" id="draftStatePill">waiting</span>
+                <div id="answerSplit">
+                  <div id="answerPane">
+                    <div class="row" style="margin-bottom: 0.25rem;">
+                      <h3 style="margin: 0; font-size: 1rem;">Progress</h3>
+                      <div class="spacer"></div>
+                      <span class="pill" id="requestIdPill">idle</span>
                     </div>
-                    <div class="muted" style="font-size: 0.86rem;">toggle</div>
-                  </summary>
-                  <div class="chunkBody">
-                    <div class="answer markdown" id="draftAnswer"></div>
+                    <div class="chunkText" id="progressLog" style="max-height: 18vh; margin-bottom: 0.9rem;"></div>
+
+                    <details id="draftDetails" style="margin-bottom: 0.9rem;">
+                      <summary>
+                        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                          <strong>Draft</strong>
+                          <span class="pill" id="draftStatePill">waiting</span>
+                        </div>
+                        <div class="muted" style="font-size: 0.86rem;">toggle</div>
+                      </summary>
+                      <div class="chunkBody">
+                        <div class="answer markdown" id="draftAnswer"></div>
+                      </div>
+                    </details>
+
+                    <div class="row" style="margin-bottom: 0.25rem;">
+                      <h3 style="margin: 0; font-size: 1rem;">Final answer</h3>
+                      <div class="spacer"></div>
+                      <span class="pill" id="chunkCountPill">0 chunks</span>
+                    </div>
+                    <div class="answer markdown" id="finalAnswer"></div>
                   </div>
-                </details>
 
-                <div class="row" style="margin-bottom: 0.25rem;">
-                  <h3 style="margin: 0; font-size: 1rem;">Final answer</h3>
-                  <div class="spacer"></div>
-                  <span class="pill" id="chunkCountPill">0 chunks</span>
-                </div>
-                <div class="answer markdown" id="finalAnswer"></div>
-
-	                <div style="margin-top: 1rem;">
+                  <div id="chunksPane">
 	                  <h3 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Reranked chunks (used for answer)</h3>
 	                  <div class="help" style="margin-bottom: 0.6rem;">
 	                    Use “Open source” to view the source document.
@@ -384,7 +408,8 @@
 	                      <div id="retrievedChunks"></div>
 	                    </div>
 	                  </details>
-	                </div>
+                  </div>
+                </div>
 	              </div>
             </div>
 
@@ -491,9 +516,21 @@
     let sourceMode = 'raw'; // 'raw' or 'rendered'
     let lastChunksBySource = new Map(); // source -> chunks[]
     let sourceCache = new Map(); // source -> {path, text}
+    let citationTargetsByDocId = new Map(); // doc_id -> {chunk_id, source, label}
+    let lastRerankedChunks = [];
+    let lastRetrievedChunks = [];
 
     function safeText(s) {
       return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function escapeHtmlAttr(s) {
+      return String(s ?? '')
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#39;');
     }
 
     function setGenerationPresets(payload) {
@@ -584,7 +621,83 @@
       return '#';
     }
 
-    function mdInline(s) {
+    function normalizeFilingType(ft) {
+      const t = String(ft || '').toUpperCase();
+      if (!t) return '';
+      if (t.includes('10') && t.includes('Q')) return '10Q';
+      if (t.includes('10') && t.includes('K')) return '10K';
+      return t.replace(/[^A-Z0-9]/g, '');
+    }
+
+    function normalizeYearQuarter(v) {
+      const raw = String(v || '').trim();
+      if (!raw) return '';
+      const upper = raw.toUpperCase();
+      const year = upper.match(/\b(20\d{2})\b/)?.[1] || upper.match(/(20\d{2})/)?.[1] || '';
+      const quarter = upper.match(/\bQ([1-4])\b/)?.[1] || upper.match(/Q([1-4])/)?.[1] || '';
+      if (year && quarter) return `${year} Q${quarter}`;
+      if (year) return year;
+      return raw;
+    }
+
+    // FIXME: this is wrong, docID is just a UUID, it never contins ticker/year/form info
+    function guessCitationLabelFromDocId(docId) {
+      const s = String(docId || '').trim();
+      if (!s) return '{? ? ?]';
+      const upper = s.toUpperCase();
+
+      const ticker = upper.match(/^[A-Z]{1,6}(?=[_-])/ )?.[0] || upper.match(/\b[A-Z]{1,6}\b/)?.[0] || '?';
+      const year = upper.match(/\b(20\d{2})\b/)?.[1] || upper.match(/(20\d{2})/)?.[1] || '';
+      const quarter = upper.match(/\bQ([1-4])\b/)?.[1] || upper.match(/Q([1-4])/)?.[1] || '';
+      const yq = (year && quarter) ? `${year} Q${quarter}` : (year || '?');
+      const form = upper.includes('10') && upper.includes('Q') ? '10Q' : (upper.includes('10') && upper.includes('K') ? '10K' : '?');
+      return `[${ticker} ${yq} ${form}]`;
+    }
+
+    function formatCitationLabelFromChunk(chunk) {
+      const doc = extractDocMeta(chunk);
+      if (!doc) return '';
+      const ticker = String(doc.ticker || '').trim().toUpperCase();
+      const yq = normalizeYearQuarter(doc.filing_quarter || doc.period_end_date || doc.filing_date);
+      const form = normalizeFilingType(doc.filing_type);
+      if (ticker && yq && form) return `[${ticker} ${yq} ${form}]`;
+      return '';
+    }
+
+    function resetCitationTargets() {
+      citationTargetsByDocId = new Map();
+    }
+
+    function updateCitationTargetsFromChunks(chunks) {
+      const list = Array.isArray(chunks) ? chunks : [];
+      for (const c of list) {
+        const docId = String(c?.doc_id || '').trim();
+        const chunkId = String(c?.chunk_id || '').trim();
+        const source = String(c?.source || '').trim();
+        if (!docId || !chunkId || !source) continue;
+        if (citationTargetsByDocId.has(docId)) continue;
+        citationTargetsByDocId.set(docId, {
+          doc_id: docId,
+          chunk_id: chunkId,
+          source,
+          label: formatCitationLabelFromChunk(c) || guessCitationLabelFromDocId(docId),
+        });
+      }
+    }
+
+    function linkifyDocCitations(html, { enable = false } = {}) {
+      if (!enable) return html;
+      const re = /\[(?:[^\]]*?)\bdoc\s*=\s*([^\]\s]+)(?:[^\]]*?)\]/gi;
+      return String(html ?? '').replace(re, (_m, docIdRaw) => {
+        const docId = String(docIdRaw || '').trim();
+        if (!docId) return _m;
+        const target = citationTargetsByDocId.get(docId);
+        const label = target?.label || guessCitationLabelFromDocId(docId);
+        return `<a href="#" class="citationLink" data-doc-id="${escapeHtmlAttr(docId)}" title="${escapeHtmlAttr(docId)}">${safeText(label)}</a>`;
+      });
+    }
+
+    function mdInline(s, opts) {
       // Input is raw text; returns safe HTML.
       let out = safeText(s);
       out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -594,10 +707,11 @@
         const h = sanitizeHref(href);
         return `<a href="${h}" target="_blank" rel="noopener">${text}</a>`;
       });
+      out = linkifyDocCitations(out, { enable: Boolean(opts?.citations) });
       return out;
     }
 
-    function renderMarkdown(md) {
+    function renderMarkdown(md, opts) {
       const lines = String(md ?? '').replace(/\r\n/g, '\n').split('\n');
       let html = '';
       let inCode = false;
@@ -632,13 +746,13 @@
         if (heading) {
           closeList();
           const level = heading[1].length;
-          html += `<h${level}>${mdInline(heading[2])}</h${level}>`;
+          html += `<h${level}>${mdInline(heading[2], opts)}</h${level}>`;
           continue;
         }
         const li = line.match(/^\s*[-*]\s+(.*)$/);
         if (li) {
           if (!inList) { html += '<ul>'; inList = true; }
-          html += `<li>${mdInline(li[1])}</li>`;
+          html += `<li>${mdInline(li[1], opts)}</li>`;
           continue;
         }
 
@@ -648,7 +762,7 @@
           continue;
         }
         closeList();
-        html += `<p>${mdInline(line)}</p>`;
+        html += `<p>${mdInline(line, opts)}</p>`;
       }
       if (inCode) flushCode();
       if (inList) html += '</ul>';
@@ -1071,13 +1185,11 @@
         const headings = Array.isArray(c.headings) && c.headings.length ? c.headings.join(' › ') : '';
         const href = sourceHref(c.source);
         const score = (typeof c.score === 'number') ? c.score.toFixed(3) : String(c.score ?? '');
-        const preview = safeText((c.preview ?? '') + (c.preview ? '…' : ''));
         const meta = (c && typeof c.metadata === 'object') ? c.metadata : null;
         const doc = extractDocMeta(c);
         const docLine = formatDocMetaLine(doc);
         const summary = (meta && typeof meta.summary === 'string') ? meta.summary.trim() : '';
         const chunkText = String(c.text ?? '');
-        const contextText = String(c.context ?? '').trim();
         const src = String(c.source || '').trim();
         const canViewInApp = isMarkdownSource(src);
 
@@ -1101,14 +1213,12 @@
             ${docLine ? `<div class="help" style="margin-bottom:0.35rem;">${docLine}</div>` : ''}
             ${headings ? `<div style="margin-bottom:0.35rem;"><strong>${safeText(headings)}</strong></div>` : ''}
             ${summary ? `<div class="muted" style="margin-bottom:0.35rem;">${safeText(summary)}</div>` : ''}
-            <div class="muted" style="margin-bottom:0.55rem;">${preview}</div>
             <div class="row" style="margin-bottom: 0.6rem;">
               ${href ? `<a href="${href}" target="_blank" rel="noopener">Open source</a>` : '<span class="muted">No source link</span>'}
               <button class="btn" type="button" data-action="view-in-app" ${canViewInApp ? '' : 'disabled'}>View in app</button>
               <span class="pill">${canViewInApp ? 'markdown' : 'non-markdown'}</span>
             </div>
-            ${contextText ? `<div style="margin-bottom:0.55rem;"><div class="muted" style="margin-bottom:0.2rem;">Context</div><div class="chunkText">${safeText(contextText)}</div></div>` : ''}
-            ${chunkText ? `<div><div class="muted" style="margin-bottom:0.2rem;">Chunk text</div><div class="chunkText">${safeText(chunkText)}</div></div>` : '<div class="muted">No chunk text included.</div>'}
+            ${chunkText ? `<div class="chunkText">${safeText(chunkText)}</div>` : '<div class="muted">Chunk text not included yet.</div>'}
           </div>
         `;
         details.addEventListener('toggle', () => {
@@ -1139,9 +1249,11 @@
       els.requestIdPill.textContent = it.id ? ('hist ' + String(it.id).slice(0, 8)) : 'history';
       els.progressLog.textContent = '';
       els.draftStatePill.textContent = 'done';
-      els.draftAnswer.innerHTML = renderMarkdown(String(res.draft_answer ?? ''));
-      els.finalAnswer.innerHTML = renderMarkdown(String(res.final_answer ?? ''));
+      resetCitationTargets();
       const chunks = res.top_chunks || [];
+      updateCitationTargetsFromChunks(chunks);
+      els.draftAnswer.innerHTML = renderMarkdown(String(res.draft_answer ?? ''), { citations: true });
+      els.finalAnswer.innerHTML = renderMarkdown(String(res.final_answer ?? ''), { citations: true });
       renderChunks(chunks);
       lastChunksBySource = buildChunksBySource(chunks);
       populateSourceSelect();
@@ -1263,6 +1375,9 @@
       renderChunks([], { container: els.chunks, countPill: els.chunkCountPill });
       lastChunksBySource = new Map();
       populateSourceSelect();
+      resetCitationTargets();
+      lastRerankedChunks = [];
+      lastRetrievedChunks = [];
 
       let draftText = '';
       let finalText = '';
@@ -1292,14 +1407,14 @@
         const scheduleDraftRender = () => {
           if (draftRenderTimer) return;
           draftRenderTimer = setTimeout(() => {
-            els.draftAnswer.innerHTML = renderMarkdown(draftText);
+            els.draftAnswer.innerHTML = renderMarkdown(draftText, { citations: true });
             draftRenderTimer = null;
           }, 120);
         };
         const scheduleFinalRender = () => {
           if (finalRenderTimer) return;
           finalRenderTimer = setTimeout(() => {
-            els.finalAnswer.innerHTML = renderMarkdown(finalText);
+            els.finalAnswer.innerHTML = renderMarkdown(finalText, { citations: true });
             finalRenderTimer = null;
           }, 120);
         };
@@ -1338,6 +1453,7 @@
 
             if (type === 'retrieved') {
               const chunks = Array.isArray(evt?.chunks) ? evt.chunks : [];
+              lastRetrievedChunks = chunks;
               renderChunks(chunks, { container: els.retrievedChunks, countPill: els.retrievedCountPill });
               els.retrievedDetails.open = true;
               appendProgress('Retrieved ' + String(evt?.count ?? chunks.length) + ' chunks');
@@ -1346,7 +1462,11 @@
 
             if (type === 'reranked') {
               const chunks = Array.isArray(evt?.chunks) ? evt.chunks : [];
+              lastRerankedChunks = chunks;
+              updateCitationTargetsFromChunks(chunks);
               renderChunks(chunks, { container: els.chunks, countPill: els.chunkCountPill });
+              lastChunksBySource = buildChunksBySource(chunks);
+              populateSourceSelect();
               appendProgress('Reranked ' + String(evt?.count ?? chunks.length) + ' chunks');
               continue;
             }
@@ -1398,8 +1518,9 @@
               els.draftStatePill.textContent = 'done';
               draftText = String(data.draft_answer ?? draftText);
               finalText = String(data.final_answer ?? finalText);
-              els.draftAnswer.innerHTML = renderMarkdown(draftText);
-              els.finalAnswer.innerHTML = renderMarkdown(finalText);
+              updateCitationTargetsFromChunks(data.top_chunks || []);
+              els.draftAnswer.innerHTML = renderMarkdown(draftText, { citations: true });
+              els.finalAnswer.innerHTML = renderMarkdown(finalText, { citations: true });
 
               const chunks = data.top_chunks || [];
               renderChunks(chunks, { container: els.chunks, countPill: els.chunkCountPill });
@@ -1470,6 +1591,52 @@
       };
       try { await navigator.clipboard.writeText(JSON.stringify(payload, null, 2)); } catch { alert('Clipboard write failed'); }
     });
+
+    function findChunkTargetForDocId(docId) {
+      const d = String(docId || '').trim();
+      if (!d) return null;
+      const direct = citationTargetsByDocId.get(d);
+      if (direct) return direct;
+
+      const fromReranked = (Array.isArray(lastRerankedChunks) ? lastRerankedChunks : []).find(c => String(c?.doc_id || '').trim() === d);
+      if (fromReranked) {
+        return { doc_id: d, chunk_id: String(fromReranked.chunk_id || ''), source: String(fromReranked.source || ''), label: guessCitationLabelFromDocId(d) };
+      }
+
+      const fromRetrieved = (Array.isArray(lastRetrievedChunks) ? lastRetrievedChunks : []).find(c => String(c?.doc_id || '').trim() === d);
+      if (fromRetrieved) {
+        return { doc_id: d, chunk_id: String(fromRetrieved.chunk_id || ''), source: String(fromRetrieved.source || ''), label: guessCitationLabelFromDocId(d) };
+      }
+
+      const fromDone = (Array.isArray(lastQueryResponse?.top_chunks) ? lastQueryResponse.top_chunks : []).find(c => String(c?.doc_id || '').trim() === d);
+      if (fromDone) {
+        return { doc_id: d, chunk_id: String(fromDone.chunk_id || ''), source: String(fromDone.source || ''), label: guessCitationLabelFromDocId(d) };
+      }
+
+      return null;
+    }
+
+    async function jumpToCitation(docId) {
+      const target = findChunkTargetForDocId(docId);
+      if (!target) return;
+      const src = String(target.source || '').trim();
+      const chunkId = String(target.chunk_id || '').trim();
+      if (!src || !chunkId) return;
+      els.sourceViewerDetails.open = true;
+      els.sourceSelect.value = src;
+      await renderSourceViewer(src, chunkId);
+    }
+
+    function onCitationClick(e) {
+      const link = e.target?.closest?.('a.citationLink');
+      if (!link) return;
+      e.preventDefault();
+      const docId = String(link.getAttribute('data-doc-id') || '').trim();
+      jumpToCitation(docId).catch(() => {});
+    }
+
+    els.draftAnswer?.addEventListener('click', onCitationClick);
+    els.finalAnswer?.addEventListener('click', onCitationClick);
 
     els.sourceSelect.addEventListener('change', async () => {
       await renderSourceViewer(els.sourceSelect.value, null);
