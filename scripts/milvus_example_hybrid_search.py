@@ -477,6 +477,8 @@ class Args:
     rerank_top_k: int
     openai_api_key: str | None
     openai_base_url: str | None
+    openai_embedding_base_url: str | None
+    openai_context_base_url: str | None
 
     def to_dict(self) -> dict[str, Any]:
         data = asdict(self)
@@ -610,9 +612,24 @@ def parse_args() -> Args:
         default=None,
         help="Override OpenAI base URL (otherwise loads from .env `base_url` or env OPENAI_BASE_URL).",
     )
+    parser.add_argument(
+        "--openai-embedding-base-url",
+        default=None,
+        help="Override OpenAI base URL for embedding calls (defaults to --openai-base-url).",
+    )
+    parser.add_argument(
+        "--openai-context-base-url",
+        default=None,
+        help="Override OpenAI base URL for contextualization chat calls (defaults to --openai-base-url).",
+    )
 
     ns = parser.parse_args()
     api_key_env, base_url_env = _openai_config_from_env()
+    base_url = str(ns.openai_base_url).strip() if ns.openai_base_url else base_url_env
+    embedding_base_url = (
+        str(ns.openai_embedding_base_url).strip() if ns.openai_embedding_base_url else base_url
+    )
+    context_base_url = str(ns.openai_context_base_url).strip() if ns.openai_context_base_url else base_url
 
     return Args(
         input_chunks_path=str(ns.input_chunks_path),
@@ -642,7 +659,9 @@ def parse_args() -> Args:
         ),
         rerank_top_k=int(ns.rerank_top_k),
         openai_api_key=str(ns.openai_api_key).strip() if ns.openai_api_key else api_key_env,
-        openai_base_url=str(ns.openai_base_url).strip() if ns.openai_base_url else base_url_env,
+        openai_base_url=base_url,
+        openai_embedding_base_url=embedding_base_url,
+        openai_context_base_url=context_base_url,
     )
 
 
@@ -652,7 +671,9 @@ def _build_openai_client(*, api_key: str | None, base_url: str | None) -> OpenAI
     if not api_key:
         raise SystemExit("Missing OpenAI API key: set `.env` `api_key` or pass `--openai-api-key`.")
     if not base_url:
-        raise SystemExit("Missing OpenAI base URL: set `.env` `base_url` or pass `--openai-base-url`.")
+        raise SystemExit(
+            "Missing OpenAI base URL: set `.env` `base_url` or pass `--openai-base-url`/`--openai-embedding-base-url`/`--openai-context-base-url`."
+        )
     kwargs: dict[str, Any] = {"api_key": api_key, "base_url": base_url, "max_retries": 1, "timeout": 120}
     return OpenAI(**kwargs)
 
@@ -678,7 +699,7 @@ def main() -> int:
         dense_embedding_function = OpenAIEmbeddingFunction(
             model_name=args.openai_embedding_model,
             api_key=args.openai_api_key,
-            base_url=args.openai_base_url,
+            base_url=args.openai_embedding_base_url,
             dimensions=args.openai_embedding_dimensions,
         )
     else:
@@ -697,7 +718,7 @@ def main() -> int:
     if args.use_reranker:
         reranker = _build_reranker(args.reranker_type, args.reranker_model_name)
 
-    openai_client = _build_openai_client(api_key=args.openai_api_key, base_url=args.openai_base_url)
+    openai_client = _build_openai_client(api_key=args.openai_api_key, base_url=args.openai_context_base_url)
     if args.use_contextualize_embedding and openai_client is None:
         raise SystemExit(
             "Contextualized embeddings require OpenAI config: set `.env` `api_key`/`base_url` or pass CLI overrides."
