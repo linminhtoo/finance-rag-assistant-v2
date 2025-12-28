@@ -53,22 +53,40 @@ def answer_question_two_stage(
     final_max_tokens: int = 32_768,
     temperature_draft: float = 0.1,
 ) -> tuple[str, str]:
+    draft_prompt = build_draft_prompt(question, reranked, draft_max_tokens=draft_max_tokens)
+    draft = llm.chat(draft_prompt, temperature=temperature_draft)
+
+    refine_prompt = build_refine_prompt(question, draft, reranked, final_max_tokens=final_max_tokens)
+    final = llm.chat(refine_prompt, temperature=0.0)
+    return draft, final
+
+
+def build_draft_prompt(
+    question: str, reranked: Sequence[ScoredChunk], *, draft_max_tokens: int = 65_536
+) -> list[ChatMessage]:
     ctx1 = build_context(reranked, max_tokens=draft_max_tokens)
-    draft_prompt: list[ChatMessage] = [
+    return [
         {"role": "system", "content": _DRAFT_SYSTEM_PROMPT},
         {
             "role": "user",
             "content": (
                 f"Question:\n{question}\n\n"
                 f"Context:\n{ctx1}\n\n"
-                "Answer concisely and list which [doc=..., page=...] segments you used."
+                "Answer concisely and list which [doc=..., page=... (if page is present)] segments you used."
             ),
         },
     ]
-    draft = llm.chat(draft_prompt, temperature=temperature_draft)
 
+
+def build_refine_prompt(
+    question: str,
+    draft: str,
+    reranked: Sequence[ScoredChunk],
+    *,
+    final_max_tokens: int = 32_768,
+) -> list[ChatMessage]:
     ctx2 = build_context(reranked, max_tokens=final_max_tokens)
-    refine_prompt: list[ChatMessage] = [
+    return [
         {"role": "system", "content": _REFINE_SYSTEM_PROMPT},
         {
             "role": "user",
@@ -77,9 +95,7 @@ def answer_question_two_stage(
                 f"Draft answer:\n{draft}\n\n"
                 f"Context:\n{ctx2}\n\n"
                 "Now write a refined answer. Start with a short paragraph, "
-                "then add a 'Sources' section referencing [doc=..., page=...]."
+                "then add a 'Sources' section referencing [doc=..., page=... (if page present)]."
             ),
         },
     ]
-    final = llm.chat(refine_prompt, temperature=0.0)
-    return draft, final
