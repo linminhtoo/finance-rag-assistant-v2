@@ -242,10 +242,11 @@ def build_retriever(storage_path: str | None) -> QdrantHybridRetriever | MilvusC
 
 
 class RAGService:
-    def __init__(self, storage_path: str):
-        self.llm = get_llm_client()
-        self.retriever = build_hybrid_retriever(storage_path)
+    def __init__(self, storage_path: str | None):
+        self.llm = _llm_for_chat()
+        self.retriever = build_retriever(storage_path)
         self.reranker = CrossEncoderReranker()
+        self._context_strategy, self._context_window, self._context_key = _context_config()
 
         # Two chunkers: with and without Mistral OCR
         self.chunker_ocr = DoclingHybridChunker(use_mistral_ocr=True)
@@ -257,14 +258,38 @@ class RAGService:
         - Mistral OCR -> Markdown -> Docling -> HybridChunker
         - Direct Docling PDF parsing -> HybridChunker
         """
+        raise RuntimeError("On-the-fly ingestion is disabled for now. Use batch ingestion script.")
+    
+        if isinstance(self.retriever, MilvusContextualRetriever) and self.retriever.use_sparse:
+            if self.retriever.uses_bm25:
+                raise RuntimeError(
+                    "Online ingestion with Milvus+BM25 is disabled. "
+                    "Rebuild BM25 and reindex in batch to keep sparse vectors consistent."
+                )
         doc_id = str(uuid.uuid4())
         chunker = self.chunker_ocr if use_mistral_ocr else self.chunker_pdf
 
+        # TODO: add logic from `process_html_to_markdown.py`
+
         docling_chunks = chunker.chunk_document(path, doc_id=doc_id)
+        apply_context_strategy(
+            docling_chunks,
+            strategy=self._context_strategy,
+            neighbor_window=self._context_window,
+            metadata_key=self._context_key,
+            llm_for_context=self.llm,
+        )
         self.retriever.index(docling_chunks)
         return doc_id
 
-    def answer_question(self, question: str, top_k_retrieve: int = 30, top_k_rerank: int = 8) -> QueryResponse:
+    def answer_question(
+        self,
+        question: str,
+        top_k_retrieve: int = 30,
+        top_k_rerank: int = 8,
+        draft_max_tokens: int = 65_536,
+        final_max_tokens: int = 32_768,
+    ) -> QueryResponse:
         # 1) Hybrid retrieve
         hybrid = self.retriever.retrieve_hybrid(
             question, top_k_semantic=top_k_retrieve, top_k_bm25=top_k_retrieve, top_k_final=top_k_retrieve
@@ -273,8 +298,14 @@ class RAGService:
         # 2) Cross-encoder rerank
         reranked = self.reranker.rerank(question, hybrid, top_k=top_k_rerank)
 
+        # TODO: add query re-writing, and also consider HyDE
+
         draft, final = answer_question_two_stage(
-            self.llm, question, reranked, draft_max_tokens=900, final_max_tokens=1500
+            self.llm,
+            question,
+            reranked,
+            draft_max_tokens=draft_max_tokens,
+            final_max_tokens=final_max_tokens,
         )
 
         # Serialize top chunks for the frontend
