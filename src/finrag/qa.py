@@ -2,6 +2,7 @@ import os
 from typing import Sequence
 
 from finrag.dataclasses import ScoredChunk
+from finrag.generation_controls import AnswerStyle
 from finrag.llm_clients import ChatMessage, LLMClient
 
 _DRAFT_SYSTEM_PROMPT = (
@@ -22,6 +23,34 @@ _REFINE_SYSTEM_PROMPT = (
     "2) fix hallucinations;\n"
     "3) clearly state if context is insufficient."
 )
+
+_STYLE_GUIDANCE: dict[AnswerStyle, str] = {
+    "concise": (
+        "Write a concise answer. Prefer a short paragraph + bullets. "
+        "Avoid long preambles. Keep it as short as possible while still accurate."
+    ),
+    "normal": (
+        "Write a clear, structured analysis. Include key numbers and key takeaways. "
+        "Keep it reasonably detailed but not overly long."
+    ),
+    "detailed": (
+        "Write a detailed report with clear section headers (e.g., Executive summary, Key points, Risks, Data points). "
+        "Be comprehensive and specific."
+    ),
+}
+
+_CITATION_GUIDANCE = (
+    "Cite sources inline by quoting the bracketed segment header ([doc=...]) "
+    "for the relevant claim(s). Use only the provided context. "
+    "Keep citations concise by only including the first 8 characters of the doc ID, e.g. '937b4eda'"
+)
+
+
+def _system_prompt(base: str, *, answer_style: AnswerStyle, extra: str | None) -> str:
+    parts = [base.strip(), _STYLE_GUIDANCE[answer_style].strip(), _CITATION_GUIDANCE.strip()]
+    if extra and extra.strip():
+        parts.append(extra.strip())
+    return "\n\n".join(parts)
 
 
 def build_context(chunks: Sequence[ScoredChunk], max_tokens: int) -> str:
@@ -69,11 +98,16 @@ def answer_question_two_stage(
 
 
 def build_draft_prompt(
-    question: str, reranked: Sequence[ScoredChunk], *, draft_max_tokens: int = 65_536
+    question: str,
+    reranked: Sequence[ScoredChunk],
+    *,
+    draft_max_tokens: int = 65_536,
+    answer_style: AnswerStyle = "normal",
+    system_extra: str | None = None,
 ) -> list[ChatMessage]:
     ctx1 = build_context(reranked, max_tokens=draft_max_tokens)
     return [
-        {"role": "system", "content": _DRAFT_SYSTEM_PROMPT},
+        {"role": "system", "content": _system_prompt(_DRAFT_SYSTEM_PROMPT, answer_style=answer_style, extra=system_extra)},
         {
             "role": "user",
             "content": (
@@ -87,11 +121,17 @@ def build_draft_prompt(
 
 
 def build_refine_prompt(
-    question: str, draft: str, reranked: Sequence[ScoredChunk], *, final_max_tokens: int = 32_768
+    question: str,
+    draft: str,
+    reranked: Sequence[ScoredChunk],
+    *,
+    final_max_tokens: int = 32_768,
+    answer_style: AnswerStyle = "normal",
+    system_extra: str | None = None,
 ) -> list[ChatMessage]:
     ctx2 = build_context(reranked, max_tokens=final_max_tokens)
     return [
-        {"role": "system", "content": _REFINE_SYSTEM_PROMPT},
+        {"role": "system", "content": _system_prompt(_REFINE_SYSTEM_PROMPT, answer_style=answer_style, extra=system_extra)},
         {
             "role": "user",
             "content": (
