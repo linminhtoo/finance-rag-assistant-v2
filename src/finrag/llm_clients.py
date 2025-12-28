@@ -17,6 +17,8 @@ class ChatMessage(TypedDict):
 
 @runtime_checkable
 class LLMClient(Protocol):
+    chat_model: str
+    embed_model: str
     def embed_texts(self, texts: list[str]) -> np.ndarray: ...
 
     def chat(self, messages: list[ChatMessage], temperature: float = 0.1) -> str: ...
@@ -137,6 +139,7 @@ class FastEmbedClientWrapper:
             from fastembed import TextEmbedding  # type: ignore
         except Exception as e:  # pragma: no cover
             raise RuntimeError("fastembed is not available; install qdrant-client[fastembed-gpu]") from e
+        self.chat_model = ""
         self.embed_model = embed_model
         self._model = TextEmbedding(model_name=embed_model)
 
