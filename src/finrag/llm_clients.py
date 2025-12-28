@@ -57,6 +57,7 @@ class OpenAIClientWrapper:
         api_key_env: str = "OPENAI_API_KEY",
         chat_model: str = "gpt-4o-mini",
         embed_model: str = "text-embedding-3-large",
+        base_url: str | None = None,
         base_url_env: str = "OPENAI_BASE_URL",
         organization_env: str = "OPENAI_ORGANIZATION",
         project_env: str = "OPENAI_PROJECT",
@@ -66,7 +67,7 @@ class OpenAIClientWrapper:
         if not api_key:
             raise RuntimeError(f"{api_key_env} is not set")
 
-        base_url = os.getenv(base_url_env) or None
+        base_url = base_url or (os.getenv(base_url_env) or None)
         organization = os.getenv(organization_env) or None
         project = os.getenv(project_env) or None
 
