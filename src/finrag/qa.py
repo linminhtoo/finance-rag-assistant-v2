@@ -40,9 +40,8 @@ _STYLE_GUIDANCE: dict[AnswerStyle, str] = {
 }
 
 _CITATION_GUIDANCE = (
-    "Cite sources inline by quoting the bracketed segment header ([doc=...]) "
-    "for the relevant claim(s). Use only the provided context. "
-    "Keep citations concise by only including the first 8 characters of the doc ID, e.g. '937b4eda'"
+    "Cite sources (chunks) inline by quoting the doc_id of the chunk as [doc=...] "
+    "for the relevant claim(s). Use only the provided context."
 )
 
 
@@ -59,11 +58,14 @@ def build_context(chunks: Sequence[ScoredChunk], max_tokens: int) -> str:
     used = 0
     context_key = os.getenv("CONTEXT_METADATA_KEY", "context").strip() or "context"
     for sc in chunks:
-        headings_s = "; ".join(sc.chunk.headings)
+        # headings_s = "; ".join(sc.chunk.headings)
         meta_bits = [f"doc={sc.chunk.doc_id}"]
-        if sc.chunk.page_no not in (None, ""):
-            meta_bits.append(f"page={sc.chunk.page_no}")
-        meta_bits.append(f"headings={headings_s}")
+        # NOTE: page_no seems to be None for all our chunks. 
+        # TODO: see if we can get `marker` to populate it (during `process_html_to_markdown.py`)
+        # if sc.chunk.page_no not in (None, ""):
+        #     meta_bits.append(f"page={sc.chunk.page_no}")
+        # Don't include headings for now, as "index_text" already has similar "section path" info
+        # meta_bits.append(f"headings={headings_s}")
         meta = "[" + " ".join(meta_bits) + "]"
 
         meta_dict = sc.chunk.metadata or {}
