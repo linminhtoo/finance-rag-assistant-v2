@@ -1156,7 +1156,7 @@
       const data = await res.json();
       const items = Array.isArray(data.items) ? data.items : [];
       historyItems = items;
-      if (data.path) els.historyPath.textContent = data.path;
+      if (data.path && els.historyPath) els.historyPath.textContent = data.path;
       writeLocalHistory(items);
       renderHistory();
       return items;
