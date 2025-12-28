@@ -4,6 +4,16 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
 now=$(date +"%Y%m%d_%H%M%S")
+script_dir="$(
+  cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
+  pwd
+)"
+project_root="$(
+  cd -- "$script_dir/.." >/dev/null 2>&1
+  pwd
+)"
+
+mkdir -p "$project_root/logs"
 
 # TorchInductor/Triton default to `/tmp`, which can be unwritable on shared systems
 # (e.g. stale `/tmp/torchinductor_$USER` owned by someone else). Force caches into
@@ -21,7 +31,8 @@ mkdir -p "$TORCHINDUCTOR_CACHE_DIR" "$TRITON_CACHE_DIR" "$TMPDIR"
 : "${OTEL_EXPORTER_OTLP_TRACES_INSECURE:=true}"
 export OTEL_SERVICE_NAME OTEL_EXPORTER_OTLP_TRACES_INSECURE
 : "${VLLM_API_KEY:=test}"
-: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:=grpc://127.0.0.1:4317}"
+: "${OTEL_EXPORTER_OTLP_TRACES_PROTOCOL:=http/protobuf}"
+: "${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:=http://localhost:4318/v1/traces}"
 
 vllm serve Qwen/Qwen3-VL-32B-Instruct-FP8 \
     --mm-encoder-attn-backend TORCH_SDPA \
@@ -32,9 +43,9 @@ vllm serve Qwen/Qwen3-VL-32B-Instruct-FP8 \
     --max-num-seqs 64 \
     --host 0.0.0.0 \
     --port 8993 \
-    --api-key test \
-    --otlp-traces-endpoint http://localhost:4318/v1/traces \
-    2>&1 | tee serve_vllm_SDPA_qwen3_vl_32b_instruct_fp8_$now.log
+    --api-key "$VLLM_API_KEY" \
+    --otlp-traces-endpoint "$OTEL_EXPORTER_OTLP_TRACES_ENDPOINT" \
+    2>&1 | tee "$project_root/logs/serve_vllm_SDPA_qwen3_vl_32b_instruct_fp8_$now.log"
 
 # Olmo's finetuned and RL'ed document understanding model, objectively inferior to Qwen3-VL
 # vllm serve allenai/olmOCR-2-7B-1025-FP8 ...
