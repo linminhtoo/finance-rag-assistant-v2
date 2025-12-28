@@ -176,4 +176,3 @@ def stream_chunks_preview_chars() -> int:
 
 def stream_chunks_max() -> int:
     return _env_int("FINRAG_STREAM_CHUNKS_MAX", 30)
-

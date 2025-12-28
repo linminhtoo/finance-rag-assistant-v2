@@ -79,11 +79,7 @@ def build_draft_prompt(
 
 
 def build_refine_prompt(
-    question: str,
-    draft: str,
-    reranked: Sequence[ScoredChunk],
-    *,
-    final_max_tokens: int = 32_768,
+    question: str, draft: str, reranked: Sequence[ScoredChunk], *, final_max_tokens: int = 32_768
 ) -> list[ChatMessage]:
     ctx2 = build_context(reranked, max_tokens=final_max_tokens)
     return [

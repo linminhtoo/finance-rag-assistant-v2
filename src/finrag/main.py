@@ -28,7 +28,14 @@ from finrag.retriever import (
     MilvusContextualRetriever,
     build_milvus_embedding_functions,
 )
-from finrag.streaming import TextDeltaBatcher, iter_chat_deltas, ndjson_bytes, stream_chunks_max, stream_chunks_preview_chars, stream_draft_enabled
+from finrag.streaming import (
+    TextDeltaBatcher,
+    iter_chat_deltas,
+    ndjson_bytes,
+    stream_chunks_max,
+    stream_chunks_preview_chars,
+    stream_draft_enabled,
+)
 
 
 # -------------------------------------------------------------------
@@ -500,13 +507,17 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 yield ndjson_bytes({"type": "cancelled", "request_id": request_id, "elapsed_ms": 0})
                 return
 
-            retrieved_payload = [_stream_chunk_dict(sc, preview_chars=preview_chars, text_chars=text_chars) for sc in hybrid]
+            retrieved_payload = [
+                _stream_chunk_dict(sc, preview_chars=preview_chars, text_chars=text_chars) for sc in hybrid
+            ]
             if max_chunks:
                 retrieved_payload = retrieved_payload[:max_chunks]
             yield ndjson_bytes({"type": "retrieved", "count": len(hybrid), "chunks": retrieved_payload})
 
             yield ndjson_bytes({"type": "status", "step": "rerank", "message": "Reranking chunks…"})
-            reranked = await asyncio.to_thread(rag_service.reranker.rerank, req.question, hybrid, top_k=req.top_k_rerank)
+            reranked = await asyncio.to_thread(
+                rag_service.reranker.rerank, req.question, hybrid, top_k=req.top_k_rerank
+            )
 
             if await request.is_disconnected():
                 set_cancelled()
@@ -514,7 +525,9 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 yield ndjson_bytes({"type": "cancelled", "request_id": request_id, "elapsed_ms": 0})
                 return
 
-            reranked_payload = [_stream_chunk_dict(sc, preview_chars=preview_chars, text_chars=text_chars) for sc in reranked]
+            reranked_payload = [
+                _stream_chunk_dict(sc, preview_chars=preview_chars, text_chars=text_chars) for sc in reranked
+            ]
             yield ndjson_bytes({"type": "reranked", "count": len(reranked), "chunks": reranked_payload})
 
             yield ndjson_bytes({"type": "status", "step": "draft", "message": "Generating draft…", "is_draft": True})
@@ -552,8 +565,12 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 )
                 return
 
-            yield ndjson_bytes({"type": "status", "step": "final", "message": "Generating final answer…", "is_draft": False})
-            refine_prompt = build_refine_prompt(req.question, full_draft, reranked, final_max_tokens=req.final_max_tokens)
+            yield ndjson_bytes(
+                {"type": "status", "step": "final", "message": "Generating final answer…", "is_draft": False}
+            )
+            refine_prompt = build_refine_prompt(
+                req.question, full_draft, reranked, final_max_tokens=req.final_max_tokens
+            )
             batcher = TextDeltaBatcher.from_env()
             async for delta in iter_chat_deltas(
                 rag_service.llm,
@@ -589,9 +606,7 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 return
 
             res = QueryResponse(
-                draft_answer=full_draft,
-                final_answer=full_final,
-                top_chunks=rag_service._serialize_top_chunks(reranked),
+                draft_answer=full_draft, final_answer=full_final, top_chunks=rag_service._serialize_top_chunks(reranked)
             )
             _append_history(req=QueryRequest(**req.dict(exclude={"request_id"})), res=res)
 
