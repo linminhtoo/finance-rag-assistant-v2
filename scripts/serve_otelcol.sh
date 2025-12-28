@@ -8,12 +8,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 # tar -xvf otelcol_0.141.0_linux_amd64.tar.gz
 
 now=$(date +"%Y%m%d_%H%M%S")
+mkdir -p ../logs
 ./otelcol --config ./otelcol-config.yaml \
 	    2>&1 | tee ../logs/otelcol_ingest_html_to_markdown.$now.log
-
-# now=$(date +"%Y%m%d_%H%M%S")
-# ./otelcol --config ./otelcol-config.yaml \
-#     2>&1 | tee otelcol.$now.log
 
 # check:
 # curl -s -X POST http://127.0.0.1:4318/v1/traces \
