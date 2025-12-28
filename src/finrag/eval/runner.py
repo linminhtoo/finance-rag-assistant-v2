@@ -12,7 +12,7 @@ from finrag.eval.metrics import best_numeric_match, cited_doc_ids, coverage_at_k
 from finrag.eval.schema import EvalItem
 from finrag.llm_clients import LLMClient
 from finrag.qa import answer_question_two_stage
-from finrag.retriever import CrossEncoderReranker, HybridRetriever, NoopReranker
+from finrag.retriever import CrossEncoderReranker, QdrantHybridRetriever, MilvusContextualRetriever, NoopReranker
 
 
 @dataclass(frozen=True)
@@ -38,7 +38,7 @@ def _answer_question(llm: LLMClient, question: str, reranked: list[ScoredChunk],
 def run_eval(
     items: list[EvalItem],
     *,
-    retriever: HybridRetriever,
+    retriever: QdrantHybridRetriever | MilvusContextualRetriever,
     reranker: CrossEncoderReranker | NoopReranker,
     cfg: EvalConfig,
     llm_for_answer: LLMClient | None = None,
