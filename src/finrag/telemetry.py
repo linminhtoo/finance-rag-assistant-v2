@@ -1,5 +1,6 @@
 import importlib.metadata
 import os
+from typing import Literal, cast
 
 from fastapi import FastAPI
 from loguru import logger
@@ -31,6 +32,35 @@ def _service_version() -> str | None:
         return None
 
 
+ExcludeSpan = Literal["receive", "send"]
+
+
+def _otel_exclude_spans() -> list[ExcludeSpan] | None:
+    """
+    `opentelemetry-instrumentation-asgi` can create a child span for every ASGI
+    `send`/`receive` call. For streaming responses this can explode into many spans.
+
+    Env:
+      - `FINRAG_OTEL_EXCLUDE_SPANS=send,receive` (default)
+      - Set to empty string to disable exclusions.
+    """
+
+    raw = os.getenv("FINRAG_OTEL_EXCLUDE_SPANS")
+    if raw is None:
+        raw = "send,receive"
+    raw = raw.strip()
+    if not raw:
+        return None
+
+    allowed: set[ExcludeSpan] = {"receive", "send"}
+    out: list[ExcludeSpan] = []
+    for part in raw.split(","):
+        v = part.strip().lower()
+        if v and v in allowed and v not in out:
+            out.append(cast(ExcludeSpan, v))
+    return out or None
+
+
 def setup_opentelemetry(app: FastAPI) -> None:
     """
     Configure OpenTelemetry tracing for the service and instrument FastAPI.
@@ -39,6 +69,7 @@ def setup_opentelemetry(app: FastAPI) -> None:
       - `FINRAG_OTEL_ENABLED=true|false` (default: true if `OTEL_EXPORTER_OTLP_ENDPOINT` is set)
     """
 
+    exclude_spans = _otel_exclude_spans()
     enabled_default = bool(os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"))
     if not _env_bool("FINRAG_OTEL_ENABLED", default=enabled_default):
         logger.info("OpenTelemetry disabled (FINRAG_OTEL_ENABLED=false).")
@@ -46,7 +77,7 @@ def setup_opentelemetry(app: FastAPI) -> None:
 
     if not _is_default_tracer_provider():
         logger.info("OpenTelemetry already configured; skipping finrag setup.")
-        FastAPIInstrumentor.instrument_app(app)
+        FastAPIInstrumentor.instrument_app(app, exclude_spans=exclude_spans)
         return
 
     resource = Resource.create(
@@ -74,5 +105,5 @@ def setup_opentelemetry(app: FastAPI) -> None:
         provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
 
     trace.set_tracer_provider(provider)
-    FastAPIInstrumentor.instrument_app(app)
-    logger.info("OpenTelemetry enabled (protocol={}).", protocol)
+    FastAPIInstrumentor.instrument_app(app, exclude_spans=exclude_spans)
+    logger.info("OpenTelemetry enabled (protocol={}, exclude_spans={}).", protocol, exclude_spans or [])
