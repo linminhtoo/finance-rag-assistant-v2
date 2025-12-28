@@ -319,10 +319,25 @@ class CustomOpenAIService(BaseOpenAIService):
 W_IN = 1400 / 96
 H_IN = 1350 / 96
 
+# Match marker's font rendering defaults for OCR consistency.
+FONT_FAMILY = settings.FONT_NAME.split(".")[0]
+FONT_CONFIG = FontConfiguration()
+
 # first part sets landscape orientation
 # second part handles page-breaks
 CSS_STYLESHEET = weasyprint.CSS(
     string=f"""
+@font-face {{
+  font-family: {FONT_FAMILY};
+  src: url({settings.FONT_PATH});
+  font-display: swap;
+}}
+body {{
+  font-family: {FONT_FAMILY}, sans-serif;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0;
+  text-rendering: optimizeLegibility;
+}}
 @page {{ size: {W_IN:.3f}in {H_IN:.3f}in; margin: 4mm; }}
 html, body {{ margin: 0; }}
 """
@@ -349,7 +364,8 @@ tr {{
 /* Optional but helpful: repeat header row on each page */
 thead {{ display: table-header-group; }}
 tfoot {{ display: table-footer-group; }}
-"""
+""",
+    font_config=FONT_CONFIG,
 )
 
 
