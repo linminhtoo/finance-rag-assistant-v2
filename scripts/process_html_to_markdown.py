@@ -869,10 +869,7 @@ def _sec_exhibits_score(page_text: str) -> int:
 
 
 def infer_sec_page_window(
-    pdf_path: Path,
-    *,
-    max_front_scan_pages: int = 15,
-    max_back_scan_pages: int = 25,
+    pdf_path: Path, *, max_front_scan_pages: int = 15, max_back_scan_pages: int = 25
 ) -> tuple[int | None, int | None, dict[str, Any]]:
     """
     Infer a [start, end) window of pages to keep for SEC 10-K/10-Q style PDFs.
@@ -971,11 +968,7 @@ def strip_table_of_contents_links_from_html(html: str) -> tuple[str, int]:
 
 
 def detect_repeated_toc_header_artifact(
-    pdf_path: Path,
-    *,
-    max_scan_pages: int = 60,
-    min_pages: int = 5,
-    min_ratio: float = 0.35,
+    pdf_path: Path, *, max_scan_pages: int = 60, min_pages: int = 5, min_ratio: float = 0.35
 ) -> tuple[bool, dict[str, Any]]:
     """
     Detect the common SEC artifact where 'Table of Contents' appears as the top line on many pages.
@@ -1084,9 +1077,7 @@ def process_one(
     sec_auto_drop_info: dict[str, Any] | None = None
     if drop_front_pages == -1 or drop_back_pages == -1:
         auto_start, auto_end, sec_auto_drop_info = infer_sec_page_window(pdf_path)
-        logger.info(
-            f"{rel_path}: SEC auto-drop inferred start={auto_start} end={auto_end} info={sec_auto_drop_info}"
-        )
+        logger.info(f"{rel_path}: SEC auto-drop inferred start={auto_start} end={auto_end} info={sec_auto_drop_info}")
         if drop_front_pages == -1:
             drop_front_pages = int(auto_start or 0)
         if drop_back_pages == -1:
@@ -1265,9 +1256,7 @@ def main():
         "LLMSectionHeaderProcessor_max_rewrite_retries": args.sectionheader_rewrite_retries,
         "LLMSectionHeaderProcessor_max_chunk_tokens": args.sectionheader_max_chunk_tokens,
         "LLMSectionHeaderProcessor_chunk_tokenizer_hf_model_id": (
-            args.sectionheader_chunk_tokenizer_hf_model_id
-            or args.sectionheader_hf_model_id
-            or args.hf_model_id
+            args.sectionheader_chunk_tokenizer_hf_model_id or args.sectionheader_hf_model_id or args.hf_model_id
         ),
         "LLMSectionHeaderProcessor_neighbor_text_max_blocks": args.sectionheader_neighbor_text_max_blocks,
         "LLMSectionHeaderProcessor_neighbor_text_max_chars": args.sectionheader_neighbor_text_max_chars,
