@@ -1,191 +1,31 @@
 import os
 import tempfile
 import uuid
+import mimetypes
+import json
+import sys
+import time
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
 
-import numpy as np
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-from mistralai import Mistral
-from mistralai.models.chatcompletionrequest import MessagesTypedDict
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from loguru import logger
 from pydantic import BaseModel
-from qdrant_client import QdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
-from rank_bm25 import BM25Okapi
-from sentence_transformers import CrossEncoder
 
 from finrag.chunking import DoclingHybridChunker
-from finrag.dataclasses import DocChunk, ScoredChunk
-from finrag.utils import get_env_var
-
-# -------------------------------------------------------------------
-# Mistral client wrapper (embeddings + chat)
-# -------------------------------------------------------------------
-
-
-class MistralClientWrapper:
-    def __init__(
-        self,
-        api_key_env: str = "MISTRAL_API_KEY",
-        chat_model: str = "mistral-small-latest",
-        embed_model: str = "mistral-embed",
-    ):
-        api_key = os.getenv(api_key_env)
-        if not api_key:
-            raise RuntimeError(f"{api_key_env} is not set")
-        self.client = Mistral(api_key=api_key)
-        self.chat_model = chat_model
-        self.embed_model = embed_model
-
-    def embed_texts(self, texts: list[str]) -> np.ndarray:
-        resp = self.client.embeddings.create(model=self.embed_model, inputs=texts)
-        vectors = [np.array(d.embedding, dtype=np.float32) for d in resp.data]
-        return np.vstack(vectors)
-
-    def chat(self, messages: list[MessagesTypedDict], temperature: float = 0.1) -> str:
-        res = self.client.chat.complete(model=self.chat_model, messages=messages, temperature=temperature, stream=False)
-        try:
-            return res.choices[0].message.content  # type: ignore
-        except Exception as e:
-            raise RuntimeError(f"Failed to get chat response: {e}") from e
-
-    # not used. just experimenting.
-    # def structured_chat(
-    #     self,
-    #     messages: list[dict[str, str]],
-    #     response_model: BaseModel,
-    #     temperature: float = 0.1,
-    # ) -> str | None:
-    #     res = self.client.chat.parse(
-    #         model=self.chat_model,
-    #         messages=messages,
-    #         response_format=response_model,
-    #         temperature=temperature,
-    #     )
-    #     return res.choices[0].message.content
-
-
-# -------------------------------------------------------------------
-# Hybrid retriever: Qdrant + BM25
-# -------------------------------------------------------------------
-
-
-class HybridRetriever:
-    def __init__(
-        self,
-        mistral: MistralClientWrapper,
-        storage_path: str,
-        collection_name: str = "rag_chunks",
-        vector_dim: int = 1024,
-    ):
-        # TODO: allow swap to OpenAI client
-        self.mistral = mistral
-        self.collection_name = collection_name
-
-        # For a real deployment, point to external Qdrant (e.g. http://qdrant:6333)
-        self.storage_path = storage_path
-        self.qdrant = QdrantClient(path=storage_path)  # ":memory:" also works
-
-        if not self.qdrant.collection_exists(collection_name):
-            self.qdrant.create_collection(
-                collection_name=collection_name, vectors_config=VectorParams(size=vector_dim, distance=Distance.COSINE)
-            )
-
-        self.chunks_by_id: dict[str, DocChunk] = {}
-        self._bm25: Optional[BM25Okapi] = None
-        self._bm25_corpus: list[list[str]] = []
-        self._bm25_chunk_ids: list[str] = []
-
-    def index(self, chunks: list[DocChunk]) -> None:
-        if not chunks:
-            return
-
-        texts = [c.text for c in chunks]
-        embeddings = self.mistral.embed_texts(texts)
-
-        points = []
-        for emb, chunk in zip(embeddings, chunks):
-            self.chunks_by_id[chunk.id] = chunk
-            points.append(PointStruct(id=chunk.id, vector=emb.tolist(), payload=chunk.as_payload()))
-
-        self.qdrant.upsert(collection_name=self.collection_name, points=points, wait=True)
-
-        # BM25
-        for chunk in chunks:
-            tokens = chunk.text.split()
-            self._bm25_corpus.append(tokens)
-            self._bm25_chunk_ids.append(chunk.id)
-        self._bm25 = BM25Okapi(self._bm25_corpus)
-
-    def _semantic_search(self, query: str, top_k: int = 20) -> list[tuple]:
-        q_emb = self.mistral.embed_texts([query])[0]
-        hits = self.qdrant.query_points(
-            collection_name=self.collection_name, query=q_emb.tolist(), limit=top_k, with_payload=False
-        )
-        return [(str(pt.id), float(pt.score)) for pt in hits.points]
-
-    def _bm25_search(self, query: str, top_k: int = 20) -> list[tuple]:
-        if self._bm25 is None:
-            return []
-        tokens = query.split()
-        scores = self._bm25.get_scores(tokens)
-        idxs = np.argsort(scores)[::-1][:top_k]
-        return [(self._bm25_chunk_ids[i], float(scores[i])) for i in idxs if scores[i] > 0]
-
-    def retrieve_hybrid(
-        self, query: str, top_k_semantic: int = 20, top_k_bm25: int = 20, top_k_final: int = 20, alpha: float = 0.6
-    ) -> list[ScoredChunk]:
-        sem_results = self._semantic_search(query, top_k_semantic)
-        bm25_results = self._bm25_search(query, top_k_bm25)
-
-        def normalize(results):
-            if not results:
-                return {}
-            vals = np.array([s for _, s in results], dtype=np.float32)
-            min_v, max_v = float(vals.min()), float(vals.max())
-            if max_v - min_v < 1e-9:
-                return {cid: 1.0 for cid, _ in results}
-            return {cid: (float(s) - min_v) / (max_v - min_v) for cid, s in results}
-
-        sem_norm = normalize(sem_results)
-        bm25_norm = normalize(bm25_results)
-
-        combined: dict[str, float] = {}
-        for cid, s in sem_norm.items():
-            combined[cid] = combined.get(cid, 0.0) + alpha * s
-        for cid, s in bm25_norm.items():
-            combined[cid] = combined.get(cid, 0.0) + (1 - alpha) * s
-
-        sorted_ids = sorted(combined.items(), key=lambda kv: kv[1], reverse=True)[:top_k_final]
-
-        out: list[ScoredChunk] = []
-        for cid, score in sorted_ids:
-            chunk = self.chunks_by_id[cid]
-            out.append(ScoredChunk(chunk=chunk, score=score, source="hybrid"))
-        return out
-
-
-# -------------------------------------------------------------------
-# Cross-encoder reranker
-# -------------------------------------------------------------------
-
-
-class CrossEncoderReranker:
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
-        self.model = CrossEncoder(model_name, trust_remote_code=True)
-
-    def rerank(self, query: str, candidates: list[ScoredChunk], top_k: int = 10) -> list[ScoredChunk]:
-        if not candidates:
-            return []
-        pairs = [(query, c.chunk.text) for c in candidates]
-        scores = self.model.predict(pairs).tolist()
-        rescored = []
-        for cand, score in zip(candidates, scores):
-            rescored.append(ScoredChunk(chunk=cand.chunk, score=float(score), source="reranker"))
-        rescored.sort(key=lambda c: c.score, reverse=True)
-        return rescored[:top_k]
+from finrag.dataclasses import TopChunk
+from finrag.llm_clients import get_llm_client
+from finrag.context_support import apply_context_strategy, context_builder_from_metadata
+from finrag.qa import answer_question_two_stage
+from finrag.retriever import (
+    CrossEncoderReranker,
+    QdrantHybridRetriever,
+    MilvusContextualRetriever,
+    build_milvus_embedding_functions,
+)
 
 
 # -------------------------------------------------------------------
@@ -193,11 +33,227 @@ class CrossEncoderReranker:
 # -------------------------------------------------------------------
 
 
+class QueryRequest(BaseModel):
+    question: str
+    top_k_retrieve: int = 30
+    top_k_rerank: int = 8
+    draft_max_tokens: int = 65_536
+    final_max_tokens: int = 32_768
+
+
+class QueryResponse(BaseModel):
+    draft_answer: str
+    final_answer: str
+    top_chunks: list[TopChunk]
+
+
+def _setup_logging(project_root: Path) -> Path:
+    logs_dir = project_root / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    log_path = logs_dir / f"main_app_{ts}.log"
+
+    logger.remove()
+    logger.add(sys.stderr, level="INFO")
+    logger.add(str(log_path), level="DEBUG")
+    return log_path
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _llm_provider_name() -> str:
+    return (os.getenv("LLM_PROVIDER") or "openai").strip().lower()
+
+
+def _llm_chat_model() -> str | None:
+    provider = _llm_provider_name()
+    if provider == "openai":
+        return (os.getenv("OPENAI_CHAT_MODEL") or os.getenv("CHAT_MODEL") or "").strip() or None
+    if provider == "mistral":
+        return (os.getenv("MISTRAL_CHAT_MODEL") or os.getenv("CHAT_MODEL") or "").strip() or None
+    return (os.getenv("CHAT_MODEL") or "").strip() or None
+
+
+def _llm_embed_model() -> str | None:
+    provider = _llm_provider_name()
+    if provider == "openai":
+        return (os.getenv("OPENAI_EMBED_MODEL") or os.getenv("EMBED_MODEL") or "").strip() or None
+    if provider == "mistral":
+        return (os.getenv("MISTRAL_EMBED_MODEL") or os.getenv("EMBED_MODEL") or "").strip() or None
+    if provider == "fastembed":
+        return (os.getenv("FASTEMBED_EMBED_MODEL") or os.getenv("EMBED_MODEL") or "").strip() or None
+    return (os.getenv("EMBED_MODEL") or "").strip() or None
+
+
+def _llm_for_embeddings():
+    provider = os.getenv("LLM_PROVIDER")
+    if _llm_provider_name() == "openai":
+        return get_llm_client(
+            provider=provider,
+            base_url=(os.getenv("OPENAI_EMBED_BASE_URL") or None),
+            embed_model=_llm_embed_model() or "text-embedding-3-large",
+        )
+    embed_model = _llm_embed_model()
+    return (
+        get_llm_client(provider=provider, embed_model=embed_model) if embed_model else get_llm_client(provider=provider)
+    )
+
+
+def _llm_for_chat():
+    provider = os.getenv("LLM_PROVIDER")
+    langsmith_trace = False
+    if os.environ.get("LANGSMITH_TRACING", "false").lower() == "true":
+        langsmith_trace = True
+
+    if _llm_provider_name() == "openai":
+        return get_llm_client(
+            provider=provider,
+            base_url=(os.getenv("OPENAI_CHAT_BASE_URL") or None),
+            chat_model=_llm_chat_model() or "gpt-4o-mini",
+            langsmith_trace=langsmith_trace,
+        )
+
+    if langsmith_trace:
+        logger.warning("LANGSMITH_TRACING is only supported for OpenAI provider at this time.")
+    chat_model = _llm_chat_model()
+    return get_llm_client(provider=provider, chat_model=chat_model) if chat_model else get_llm_client(provider=provider)
+
+
+def _context_config() -> tuple[str, int, str]:
+    strategy = os.getenv("CONTEXT_STRATEGY", "none").strip().lower()
+    window_raw = os.getenv("CONTEXT_WINDOW", "1")
+    try:
+        window = int(window_raw)
+    except ValueError as exc:
+        raise RuntimeError("CONTEXT_WINDOW must be an integer") from exc
+    metadata_key = os.getenv("CONTEXT_METADATA_KEY", "context").strip() or "context"
+    return strategy, window, metadata_key
+
+
+def build_hybrid_retriever(storage_path: str) -> QdrantHybridRetriever:
+    """
+    Build the default Qdrant-backed hybrid retriever.
+
+    Parameters
+    ----------
+    storage_path : str
+        Filesystem path for Qdrant storage.
+
+    Returns
+    -------
+    HybridRetriever
+        Configured retriever instance.
+    """
+
+    bm25_path = os.getenv("BM25_PATH")
+    if bm25_path:
+        bm25_path = os.path.expanduser(bm25_path)
+    _, _, context_key = _context_config()
+    context_builder = context_builder_from_metadata(key=context_key)
+    return QdrantHybridRetriever(
+        llm_client=_llm_for_embeddings(),
+        storage_path=storage_path,
+        bm25_path=bm25_path,
+        context_builder=context_builder,
+        context_metadata_key=context_key,
+    )
+
+
+def build_milvus_retriever() -> MilvusContextualRetriever:
+    """
+    Build the Milvus-backed retriever using environment configuration.
+
+    Returns
+    -------
+    MilvusContextualRetriever
+        Configured retriever instance.
+    """
+
+    project_root = Path(__file__).resolve().parents[2]
+
+    # NOTE: MILVUS_URI only accepts http[s]://
+    # filepaths should be provided via MILVUS_PATH for local storage
+    milvus_uri = os.getenv("MILVUS_URI") or os.getenv("MILVUS_PATH") or str(project_root / "data" / "milvus.db")
+    if "://" not in milvus_uri:
+        milvus_uri = os.path.expanduser(milvus_uri)
+    logger.info(f"Using {milvus_uri=}")
+
+    collection_name = os.getenv("MILVUS_COLLECTION_NAME") or "finrag_milvus_collection"
+
+    use_sparse = _env_bool("MILVUS_USE_SPARSE", default=True)
+    sparse_kind = os.getenv("MILVUS_SPARSE_EMBEDDING", "bm25").strip().lower()
+    if sparse_kind == "none":
+        use_sparse = False
+
+    bm25_path = os.getenv("BM25_PATH")
+    if bm25_path:
+        bm25_path = os.path.expanduser(bm25_path)
+
+    dense_kind = os.getenv("MILVUS_DENSE_EMBEDDING", "llm").strip().lower()
+
+    _, _, context_key = _context_config()
+    dense_fn, sparse_fn = build_milvus_embedding_functions(
+        llm_client_for_dense=_llm_for_embeddings(),
+        dense_kind=dense_kind,
+        sparse_kind=sparse_kind,
+        use_sparse=use_sparse,
+    )
+    context_builder = context_builder_from_metadata(key=context_key)
+    retriever = MilvusContextualRetriever(
+        uri=milvus_uri,
+        collection_name=collection_name,
+        use_sparse=use_sparse,
+        bm25_path=bm25_path,
+        dense_embedding_function=dense_fn,
+        sparse_embedding_function=sparse_fn,
+        context_builder=context_builder,
+        context_metadata_key=context_key,
+    )
+
+    if use_sparse and retriever.uses_bm25:
+        if bm25_path is None:
+            raise RuntimeError("MILVUS_USE_SPARSE=true requires MILVUS_BM25_PATH (or BM25_PATH).")
+        if not Path(bm25_path).exists():
+            raise RuntimeError(f"BM25 parameters not found at: {bm25_path}")
+        retriever.load_bm25(bm25_path)
+
+    return retriever
+
+
+def build_retriever(storage_path: str | None) -> QdrantHybridRetriever | MilvusContextualRetriever:
+    """
+    Build a retriever based on the configured backend.
+
+    Parameters
+    ----------
+    storage_path : str | None
+        Qdrant storage path. Required when RETRIEVER_BACKEND=qdrant.
+
+    Returns
+    -------
+    QdrantHybridRetriever | MilvusContextualRetriever
+        Configured retriever instance.
+    """
+
+    backend = os.getenv("RETRIEVER_BACKEND", "qdrant").strip().lower()
+    if backend == "milvus":
+        return build_milvus_retriever()
+    if storage_path is None:
+        raise RuntimeError("QDRANT_STORAGE_PATH is required when RETRIEVER_BACKEND=qdrant.")
+    return build_hybrid_retriever(storage_path)
+
+
 class RAGService:
-    def __init__(self, storage_path: str):
-        self.mistral = MistralClientWrapper()
-        self.retriever = HybridRetriever(self.mistral, storage_path=storage_path)
+    def __init__(self, storage_path: str | None):
+        self.llm = _llm_for_chat()
+        self.retriever = build_retriever(storage_path)
         self.reranker = CrossEncoderReranker()
+        self._context_strategy, self._context_window, self._context_key = _context_config()
 
         # Two chunkers: with and without Mistral OCR
         self.chunker_ocr = DoclingHybridChunker(use_mistral_ocr=True)
@@ -209,32 +265,38 @@ class RAGService:
         - Mistral OCR -> Markdown -> Docling -> HybridChunker
         - Direct Docling PDF parsing -> HybridChunker
         """
+        raise RuntimeError("On-the-fly ingestion is disabled for now. Use batch ingestion script.")
+
+        if isinstance(self.retriever, MilvusContextualRetriever) and self.retriever.use_sparse:
+            if self.retriever.uses_bm25:
+                raise RuntimeError(
+                    "Online ingestion with Milvus+BM25 is disabled. "
+                    "Rebuild BM25 and reindex in batch to keep sparse vectors consistent."
+                )
         doc_id = str(uuid.uuid4())
         chunker = self.chunker_ocr if use_mistral_ocr else self.chunker_pdf
 
+        # TODO: add logic from `process_html_to_markdown.py`
+
         docling_chunks = chunker.chunk_document(path, doc_id=doc_id)
+        apply_context_strategy(
+            docling_chunks,
+            strategy=self._context_strategy,
+            neighbor_window=self._context_window,
+            metadata_key=self._context_key,
+            llm_for_context=self.llm,
+        )
         self.retriever.index(docling_chunks)
         return doc_id
 
-    def _build_context(self, chunks: list[ScoredChunk], max_tokens: int) -> str:
-        budget_chars = max_tokens * 4
-        parts = []
-        used = 0
-        for sc in chunks:
-            meta = (
-                f"[doc={sc.chunk.doc_id} "
-                # f"page={sc.chunk.page_no} "
-                f"headings={'; '.join(sc.chunk.headings)}]"
-            )
-            text = sc.chunk.text.strip()
-            block = f"{meta}\n{text}\n"
-            if used + len(block) > budget_chars:
-                break
-            parts.append(block)
-            used += len(block)
-        return "\n\n".join(parts)
-
-    def answer_question(self, question: str, top_k_retrieve: int = 30, top_k_rerank: int = 8) -> dict[str, Any]:
+    def answer_question(
+        self,
+        question: str,
+        top_k_retrieve: int = 30,
+        top_k_rerank: int = 8,
+        draft_max_tokens: int = 65_536,
+        final_max_tokens: int = 32_768,
+    ) -> QueryResponse:
         # 1) Hybrid retrieve
         hybrid = self.retriever.retrieve_hybrid(
             question, top_k_semantic=top_k_retrieve, top_k_bm25=top_k_retrieve, top_k_final=top_k_retrieve
@@ -243,74 +305,43 @@ class RAGService:
         # 2) Cross-encoder rerank
         reranked = self.reranker.rerank(question, hybrid, top_k=top_k_rerank)
 
-        # 3) Stage 1: draft
-        ctx1 = self._build_context(reranked, max_tokens=900)
-        # NOTE: MessagesTypedDict type is specific to mistral.
-        # need to handle OpenAI differently if used.
-        draft_prompt: list[MessagesTypedDict] = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a careful assistant answering questions over government "
-                    "policy PDFs. Always stay grounded in the provided context."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Question:\n{question}\n\n"
-                    f"Context:\n{ctx1}\n\n"
-                    "Answer concisely and list which [doc=..., page=...] segments you used."
-                ),
-            },
-        ]
-        draft = self.mistral.chat(draft_prompt, temperature=0.1)
+        # TODO: add query re-writing, and also consider HyDE
 
-        # 4) Stage 2: refine
-        ctx2 = self._build_context(reranked, max_tokens=1500)
-        # NOTE: MessagesTypedDict type is specific to mistral.
-        # need to handle OpenAI differently if used.
-        refine_prompt: list[MessagesTypedDict] = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a senior policy analyst. You must:\n"
-                    "1) check the draft answer against the context;\n"
-                    "2) fix hallucinations;\n"
-                    "3) clearly state if context is insufficient."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"User question:\n{question}\n\n"
-                    f"Draft answer:\n{draft}\n\n"
-                    f"Context:\n{ctx2}\n\n"
-                    "Now write a refined answer. Start with a short paragraph, "
-                    "then add a 'Sources' section referencing [doc=..., page=...]."
-                ),
-            },
-        ]
-        final = self.mistral.chat(refine_prompt, temperature=0.0)
+        draft, final = answer_question_two_stage(
+            self.llm, question, reranked, draft_max_tokens=draft_max_tokens, final_max_tokens=final_max_tokens
+        )
 
         # Serialize top chunks for the frontend
         top_chunks = [
-            {
-                "doc_id": sc.chunk.doc_id,
-                # "page_no": sc.chunk.page_no,
-                "headings": sc.chunk.headings,
-                "score": sc.score,
-                "preview": sc.chunk.text[:300],
-            }
+            TopChunk(
+                chunk_id=sc.chunk.id,
+                doc_id=sc.chunk.doc_id,
+                page_no=sc.chunk.page_no,
+                headings=sc.chunk.headings,
+                score=sc.score,
+                preview=sc.chunk.text[:300],
+                source=sc.chunk.source,
+                text=sc.chunk.text,
+                context=(
+                    str((sc.chunk.metadata or {}).get(self._context_key))
+                    if (sc.chunk.metadata or {}).get(self._context_key) is not None
+                    else None
+                ),
+            )
             for sc in reranked
         ]
 
-        return {"draft_answer": draft, "final_answer": final, "top_chunks": top_chunks}
+        return QueryResponse(draft_answer=draft, final_answer=final, top_chunks=top_chunks)
 
 
 # -------------------------------------------------------------------
 # FastAPI wiring
 # -------------------------------------------------------------------
+
+project_root = Path(__file__).resolve().parents[2]
+log_path = _setup_logging(project_root)
+logger.debug("Project root: %s", project_root)
+logger.info("Starting RAG service; logs at: %s", log_path)
 
 app = FastAPI(title="RAG Demo (Mistral + Docling + Qdrant)")
 
@@ -322,14 +353,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# TODO: add Langsmith tracing
-rag_service = RAGService(storage_path=get_env_var("QDRANT_STORAGE_PATH"))
-
-
-class QueryRequest(BaseModel):
-    question: str
-    top_k_retrieve: int = 30
-    top_k_rerank: int = 8
+rag_service = RAGService(storage_path=os.getenv("QDRANT_STORAGE_PATH"))
 
 
 @app.get("/health")
@@ -363,10 +387,158 @@ async def ingest_pdf(file: UploadFile = File(...), use_mistral_ocr: bool = Form(
 
 @app.post("/query")
 async def query_docs(req: QueryRequest):
+    # TODO: explore adding support for multi-turn Q&A
     result = rag_service.answer_question(
-        question=req.question, top_k_retrieve=req.top_k_retrieve, top_k_rerank=req.top_k_rerank
+        question=req.question,
+        top_k_retrieve=req.top_k_retrieve,
+        top_k_rerank=req.top_k_rerank,
+        draft_max_tokens=req.draft_max_tokens,
+        final_max_tokens=req.final_max_tokens,
     )
+    _append_history(req=req, res=result)
     return result
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _source_roots() -> list[Path]:
+    raw = os.getenv("SOURCE_ROOTS")
+    if raw:
+        parts = [p.strip() for p in raw.split(os.pathsep) if p.strip()]
+        return [Path(p).expanduser().resolve() for p in parts]
+    root = _project_root()
+    return [root, root / "data"]
+
+
+def _resolve_local_source(path: str) -> Path:
+    path = (path or "").strip()
+    if not path:
+        raise HTTPException(status_code=400, detail="Missing `path`")
+
+    p = Path(os.path.expanduser(path))
+    if not p.is_absolute():
+        p = (_project_root() / p).resolve()
+    else:
+        p = p.resolve()
+
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail=f"File not found: {p}")
+
+    allowed = _source_roots()
+    if not any(p == root or p.is_relative_to(root) for root in allowed):
+        raise HTTPException(
+            status_code=403,
+            detail=("Path is outside SOURCE_ROOTS; set SOURCE_ROOTS to a colon-separated allowlist of directories."),
+        )
+
+    return p
+
+
+@app.get("/source")
+def get_source(path: str = Query(..., description="Local file path or URL")):
+    path = (path or "").strip()
+    if path.startswith(("http://", "https://")):
+        return RedirectResponse(url=path)
+    p = _resolve_local_source(path)
+    media_type, _enc = mimetypes.guess_type(str(p))
+    return FileResponse(
+        path=p, media_type=media_type or "application/octet-stream", filename=p.name, content_disposition_type="inline"
+    )
+
+
+def _read_text_file(path: Path, *, max_bytes: int) -> str:
+    if max_bytes <= 0:
+        raise HTTPException(status_code=400, detail="SOURCE_TEXT_MAX_BYTES must be > 0")
+    size = path.stat().st_size
+    if size > max_bytes:
+        raise HTTPException(status_code=413, detail=f"File too large ({size} bytes); max is {max_bytes} bytes")
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="replace")
+
+
+@app.get("/source_text")
+def get_source_text(path: str = Query(..., description="Local markdown/text file path")):
+    p = _resolve_local_source(path)
+    suffix = p.suffix.lower()
+    if suffix not in {".md", ".markdown", ".txt"}:
+        raise HTTPException(status_code=415, detail="Only .md/.markdown/.txt are supported for inline text viewing")
+
+    max_bytes_raw = os.getenv("SOURCE_TEXT_MAX_BYTES", "5000000").strip()
+    try:
+        max_bytes = int(max_bytes_raw)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="SOURCE_TEXT_MAX_BYTES must be an integer") from exc
+
+    return {"path": str(p), "text": _read_text_file(p, max_bytes=max_bytes)}
+
+
+class HistoryEntry(BaseModel):
+    id: str
+    created_at: str
+    request: QueryRequest
+    response: QueryResponse
+
+
+def _history_path() -> Path:
+    raw = os.getenv("HISTORY_PATH")
+    if raw and raw.strip():
+        return Path(os.path.expanduser(raw.strip())).resolve()
+    return (_project_root() / "data" / "qa_history.jsonl").resolve()
+
+
+def _append_history(*, req: QueryRequest, res: QueryResponse) -> None:
+    if _env_bool("DISABLE_HISTORY", default=False):
+        return
+    entry = HistoryEntry(
+        id=str(uuid.uuid4()), created_at=datetime.now(timezone.utc).isoformat(), request=req, response=res
+    )
+    path = _history_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(jsonable_encoder(entry), ensure_ascii=False) + "\n")
+    except Exception as exc:  # noqa: BLE001 - history should never break /query
+        logger.warning("Failed to write history to %s: %r", path, exc)
+
+
+def _read_history(*, limit: int = 50) -> list[dict]:
+    limit = max(0, int(limit))
+    path = _history_path()
+    if limit == 0 or not path.exists():
+        return []
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            lines = [ln for ln in (line.strip() for line in f) if ln]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to read history from %s: %r", path, exc)
+        return []
+
+    out: list[dict] = []
+    for line in reversed(lines[-limit:]):
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            out.append(payload)
+    return out
+
+
+@app.get("/history")
+def history(limit: int = 50):
+    return {"items": _read_history(limit=limit), "path": str(_history_path())}
+
+
+@app.delete("/history")
+def clear_history():
+    path = _history_path()
+    if path.exists():
+        path.unlink()
+    return {"status": "ok", "path": str(path)}
 
 
 # -------------------------------------------------------------------
@@ -374,10 +546,9 @@ async def query_docs(req: QueryRequest):
 # -------------------------------------------------------------------
 
 HTML_PATH = Path(__file__).parent / "static" / "index.html"
-with open(HTML_PATH, "r") as f:
-    HTML_PAGE = f.read()
 
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return HTML_PAGE
+    # Read on request so frontend edits don't require a server restart.
+    return HTML_PATH.read_text(encoding="utf-8")
