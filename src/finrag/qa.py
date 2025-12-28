@@ -5,12 +5,19 @@ from finrag.dataclasses import ScoredChunk
 from finrag.llm_clients import ChatMessage, LLMClient
 
 _DRAFT_SYSTEM_PROMPT = (
-    "You are a careful assistant answering questions over SEC filings of publicly-traded companies. "
-    "Always stay grounded in the provided context."
+    "You are a senior investment banking analyst. "
+    "You are tasked with answering questions over SEC financial filings of publicly-traded companies. "
+    "Write detailed and accurate analyses that cite the provided context. "
+    "Use only the provided context to answer the question. If the context does not contain sufficient information, "
+    "state that you cannot answer the question based on the provided context."
 )
 
 _REFINE_SYSTEM_PROMPT = (
-    "You are a senior investment banking analyst. You must:\n"
+    "You are a principal investment banking analyst leading a top-tier hedge fund. "
+    "Your subordinate has written up a draft report for your review. "
+    "After your review, you will finalize the report for submission to the investment board, "
+    "where millions of dollars will be invested. "
+    "You must:\n"
     "1) check the draft answer against the context;\n"
     "2) fix hallucinations;\n"
     "3) clearly state if context is insufficient."
@@ -72,7 +79,8 @@ def build_draft_prompt(
             "content": (
                 f"Question:\n{question}\n\n"
                 f"Context:\n{ctx1}\n\n"
-                "Answer concisely and list which [doc=..., page=... (if page is present)] segments you used."
+                "Write your analysis to address the question based on the provided context. "
+                # "At the end, list which [doc=..., page=... (if page is present)] segments you used."
             ),
         },
     ]
@@ -90,8 +98,8 @@ def build_refine_prompt(
                 f"User question:\n{question}\n\n"
                 f"Draft answer:\n{draft}\n\n"
                 f"Context:\n{ctx2}\n\n"
-                "Now write a refined answer. Start with a short paragraph, "
-                "then add a 'Sources' section referencing [doc=..., page=... (if page present)]."
+                "Now write a refined answer. "
+                # "At the end, add a 'Sources' section referencing [doc=..., page=... (if page present)]."
             ),
         },
     ]
