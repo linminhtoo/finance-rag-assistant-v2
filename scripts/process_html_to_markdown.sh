@@ -13,30 +13,95 @@ now=$(date +"%Y%m%d_%H%M%S")
 # NOTE: interrupted due to vLLM server OOM.
 # v4b:
 # - skip Table Merge processor. it is unnecessary and just wastes LLM calls.
+# v4c:
+# - provide addiitonal layout cues such as line height to Section Header LLM processing.
+# - use "deep" for everything.
+# v5;
+# - chunked processing of section header rewriting
+# ~7 hrs total for 119 HTMLs with below args, LLM is hosted on 2 H100 GPUs via vLLM
 python3 -m scripts.process_html_to_markdown \
     --html-dir "./data/sec_filings/raw_htmls/" \
-    --output-dir "./data/sec_filings_md_v4b/" \
-    --year-cutoff 2022 \
+    --output-dir "./data/sec_filings_md_v5/" \
+    --year-cutoff 2023 \
     --drop-front-pages -1 \
     --drop-back-pages -1 \
     --openai-model Qwen/Qwen3-VL-32B-Instruct-FP8 \
     --token-count-hf-model-id Qwen/Qwen3-VL-32B-Instruct \
-    --timeout 240 \
+    --analysis-style deep \
+    --timeout 360 \
     --sectionheader-openai-model Qwen/Qwen3-VL-32B-Instruct-FP8 \
     --sectionheader-token-count-hf-model-id Qwen/Qwen3-VL-32B-Instruct \
-    --sectionheader-timeout 500 \
+    --sectionheader-analysis-style deep \
+    --sectionheader-rewrite-retries 0 \
+    --sectionheader-chunk-tokenizer-hf-model-id Qwen/Qwen3-VL-32B-Instruct \
+    --sectionheader-max-chunk-tokens 10000 \
+    --sectionheader-neighbor-text-max-blocks 2 \
+    --sectionheader-neighbor-text-max-chars 400 \
+    --sectionheader-recent-headers-max-count 20 \
+    --sectionheader-timeout 360 \
     --max-retries 1 \
     --log-prompt-token-count \
     --gpu-ids 0,1 \
-    --workers 2 \
+    --workers 4 \
     --max-concurrency 16 \
     --openai-temperature 0 \
     --max-image-long-side 1288 \
     --image-expansion-ratio 0.05 \
-    --analysis-style auto \
     --disable-forms \
     --disable-table-merge \
-    2>&1 | tee logs/process_v4b_$now.log
+    2>&1 | tee logs/process_v5_$now.log
+
+# python3 -m scripts.process_html_to_markdown \
+#     --html-dir "./data/sec_filings/raw_htmls/" \
+#     --output-dir "./data/sec_filings_md_v4c/" \
+#     --year-cutoff 2023 \
+#     --drop-front-pages -1 \
+#     --drop-back-pages -1 \
+#     --openai-model Qwen/Qwen3-VL-32B-Instruct-FP8 \
+#     --token-count-hf-model-id Qwen/Qwen3-VL-32B-Instruct \
+#     --timeout 360 \
+#     --sectionheader-openai-model Qwen/Qwen3-VL-32B-Instruct-FP8 \
+#     --sectionheader-token-count-hf-model-id Qwen/Qwen3-VL-32B-Instruct \
+#     --sectionheader-timeout 700 \
+#     --max-retries 1 \
+#     --log-prompt-token-count \
+#     --gpu-ids 0,1 \
+#     --workers 4 \
+#     --max-concurrency 12 \
+#     --openai-temperature 0 \
+#     --max-image-long-side 1288 \
+#     --image-expansion-ratio 0.05 \
+#     --analysis-style deep \
+#     --sectionheader-analysis-style deep \
+#     --sectionheader-rewrite-retries 1 \
+#     --disable-forms \
+#     --disable-table-merge \
+#     2>&1 | tee logs/process_v4c_$now.log
+
+# python3 -m scripts.process_html_to_markdown \
+#     --html-dir "./data/sec_filings/raw_htmls/" \
+#     --output-dir "./data/sec_filings_md_v4b/" \
+#     --year-cutoff 2023 \
+#     --drop-front-pages -1 \
+#     --drop-back-pages -1 \
+#     --openai-model Qwen/Qwen3-VL-32B-Instruct-FP8 \
+#     --token-count-hf-model-id Qwen/Qwen3-VL-32B-Instruct \
+#     --timeout 240 \
+#     --sectionheader-openai-model Qwen/Qwen3-VL-32B-Instruct-FP8 \
+#     --sectionheader-token-count-hf-model-id Qwen/Qwen3-VL-32B-Instruct \
+#     --sectionheader-timeout 500 \
+#     --max-retries 1 \
+#     --log-prompt-token-count \
+#     --gpu-ids 0,1 \
+#     --workers 2 \
+#     --max-concurrency 16 \
+#     --openai-temperature 0 \
+#     --max-image-long-side 1288 \
+#     --image-expansion-ratio 0.05 \
+#     --analysis-style auto \
+#     --disable-forms \
+#     --disable-table-merge \
+#     2>&1 | tee logs/process_v4b_$now.log
 
 # python3 -m scripts.process_html_to_markdown \
 #     --html-dir "./data/htmls_for_debugging/" \
