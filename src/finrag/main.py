@@ -23,7 +23,7 @@ from opentelemetry.semconv_ai import GenAISystem
 from opentelemetry.semconv_ai import SpanAttributes as AISpanAttributes
 from opentelemetry.trace import Status, StatusCode
 
-from finrag.chunking import DoclingHybridChunker
+# from finrag.chunking import DoclingHybridChunker
 from finrag.dataclasses import TopChunk
 from finrag.generation_controls import (
     GenerationSettings,
@@ -241,13 +241,17 @@ def build_hybrid_retriever(storage_path: str) -> QdrantHybridRetriever:
         bm25_path = os.path.expanduser(bm25_path)
     _, _, context_key = _context_config()
     context_builder = context_builder_from_metadata(key=context_key)
-    return QdrantHybridRetriever(
+    retriever = QdrantHybridRetriever(
         llm_client=_llm_for_embeddings(),
         storage_path=storage_path,
         bm25_path=bm25_path,
         context_builder=context_builder,
         context_metadata_key=context_key,
     )
+    logger.info(
+        f"Using Qdrant retriever with storage path: {storage_path}, bm25_path: {bm25_path}"
+    )
+    return retriever
 
 
 def build_milvus_retriever() -> MilvusContextualRetriever:
@@ -308,6 +312,10 @@ def build_milvus_retriever() -> MilvusContextualRetriever:
             raise RuntimeError(f"BM25 parameters not found at: {bm25_path}")
         retriever.load_bm25(bm25_path)
 
+    logger.info(
+        f"Using Milvus retriever with collection: {collection_name}, sparse={use_sparse}, "
+        f"uri={milvus_uri}"
+    )
     return retriever
 
 
@@ -334,16 +342,22 @@ def build_retriever(storage_path: str | None) -> QdrantHybridRetriever | MilvusC
     return build_hybrid_retriever(storage_path)
 
 
+def build_reranker() -> CrossEncoderReranker:
+    reranker_model = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2").strip()
+    logger.info(f"Using reranker model: {reranker_model}")
+    return CrossEncoderReranker(model_name=reranker_model)
+
 class RAGService:
     def __init__(self, storage_path: str | None):
         self.llm = _llm_for_chat()
+        logger.info(f"Using LLM chat model: {self.llm.chat_model}")
         self.retriever = build_retriever(storage_path)
-        self.reranker = CrossEncoderReranker()
+        self.reranker = build_reranker()
         self._context_strategy, self._context_window, self._context_key = _context_config()
 
         # Two chunkers: with and without Mistral OCR
-        self.chunker_ocr = DoclingHybridChunker(use_mistral_ocr=True)
-        self.chunker_pdf = DoclingHybridChunker(use_mistral_ocr=False)
+        # self.chunker_ocr = DoclingHybridChunker(use_mistral_ocr=True)
+        # self.chunker_pdf = DoclingHybridChunker(use_mistral_ocr=False)
 
     @staticmethod
     def _chunk_metadata_for_ui(meta: dict | None) -> dict | None:
@@ -1100,7 +1114,7 @@ def _append_history(*, req: QueryRequest, res: QueryResponse) -> None:
         logger.warning("Failed to write history to %s: %r", path, exc)
 
 
-def _read_history(*, limit: int = 50) -> list[dict]:
+def _read_history(*, limit: int = 50, summary: bool = False) -> list[dict]:
     limit = max(0, int(limit))
     path = _history_path()
     if limit == 0 or not path.exists():
