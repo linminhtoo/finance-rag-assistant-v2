@@ -67,7 +67,13 @@ def download_primary(cik, acc_no, primary_doc, timeout: int = 60):
     return html, url
 
 
-def fetch_10ks_for_tickers(tickers: list[str], output_dir: Path, per_company: int = 5, delay: float = 0.2):
+def fetch_10ks_for_tickers(
+    tickers: list[str],
+    output_dir: Path,
+    per_company: int = 5,
+    delay: float = 0.2,
+    skip_existing: bool = False,
+):
     out_raw_folder = output_dir / "raw_htmls"
     out_meta_folder = output_dir / "meta"
     out_raw_folder.mkdir(parents=True, exist_ok=True)
@@ -79,11 +85,17 @@ def fetch_10ks_for_tickers(tickers: list[str], output_dir: Path, per_company: in
         for form_type, acc_no, primary, fdate in tqdm(
             list_10k_submissions(cik, per_company), desc=f"processing ticker {t}"
         ):
-            html, src_url = download_primary(cik, acc_no, primary)
-
             base = f"{t.upper()}_{acc_no}_{form_type}_{fdate}"
 
-            (out_raw_folder / f"{base}.html").write_text(html, encoding="utf-8")
+            raw_path = out_raw_folder / f"{base}.html"
+            meta_path = out_meta_folder / f"{base}.json"
+            if skip_existing and raw_path.exists() and meta_path.exists():
+                logger.info(f"Skipping existing files for {base}")
+                continue
+
+            html, src_url = download_primary(cik, acc_no, primary)
+
+            raw_path.write_text(html, encoding="utf-8")
 
             meta = {
                 "ticker": t.upper(),
@@ -94,7 +106,7 @@ def fetch_10ks_for_tickers(tickers: list[str], output_dir: Path, per_company: in
                 "source_url": src_url,
                 "form": form_type,
             }
-            (out_meta_folder / f"{base}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2))
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2))
 
             time.sleep(delay)  # be polite
 
@@ -108,6 +120,13 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", type=Path, default=Path("./data"), help="Directory to save downloaded files")
     parser.add_argument("--per-company", type=int, default=8, help="Number of filings to download per company")
     parser.add_argument("--delay", type=float, default=0.2, help="Delay between requests to SEC")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip downloads when output files already exist")
     args = parser.parse_args()
 
-    fetch_10ks_for_tickers(args.tickers, output_dir=args.output_dir, per_company=args.per_company, delay=args.delay)
+    fetch_10ks_for_tickers(
+        args.tickers,
+        output_dir=args.output_dir,
+        per_company=args.per_company,
+        delay=args.delay,
+        skip_existing=args.skip_existing,
+    )
