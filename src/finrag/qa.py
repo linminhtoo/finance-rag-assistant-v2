@@ -60,7 +60,7 @@ def build_context(chunks: Sequence[ScoredChunk], max_tokens: int) -> str:
     for sc in chunks:
         # headings_s = "; ".join(sc.chunk.headings)
         meta_bits = [f"doc={sc.chunk.doc_id}"]
-        # NOTE: page_no seems to be None for all our chunks. 
+        # NOTE: page_no seems to be None for all our chunks.
         # TODO: see if we can get `marker` to populate it (during `process_html_to_markdown.py`)
         # if sc.chunk.page_no not in (None, ""):
         #     meta_bits.append(f"page={sc.chunk.page_no}")
@@ -109,7 +109,10 @@ def build_draft_prompt(
 ) -> list[ChatMessage]:
     ctx1 = build_context(reranked, max_tokens=draft_max_tokens)
     return [
-        {"role": "system", "content": _system_prompt(_DRAFT_SYSTEM_PROMPT, answer_style=answer_style, extra=system_extra)},
+        {
+            "role": "system",
+            "content": _system_prompt(_DRAFT_SYSTEM_PROMPT, answer_style=answer_style, extra=system_extra),
+        },
         {
             "role": "user",
             "content": (
@@ -133,7 +136,10 @@ def build_refine_prompt(
 ) -> list[ChatMessage]:
     ctx2 = build_context(reranked, max_tokens=final_max_tokens)
     return [
-        {"role": "system", "content": _system_prompt(_REFINE_SYSTEM_PROMPT, answer_style=answer_style, extra=system_extra)},
+        {
+            "role": "system",
+            "content": _system_prompt(_REFINE_SYSTEM_PROMPT, answer_style=answer_style, extra=system_extra),
+        },
         {
             "role": "user",
             "content": (

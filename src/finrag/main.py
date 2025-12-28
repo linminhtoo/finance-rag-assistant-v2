@@ -248,9 +248,7 @@ def build_hybrid_retriever(storage_path: str) -> QdrantHybridRetriever:
         context_builder=context_builder,
         context_metadata_key=context_key,
     )
-    logger.info(
-        f"Using Qdrant retriever with storage path: {storage_path}, bm25_path: {bm25_path}"
-    )
+    logger.info(f"Using Qdrant retriever with storage path: {storage_path}, bm25_path: {bm25_path}")
     return retriever
 
 
@@ -312,10 +310,7 @@ def build_milvus_retriever() -> MilvusContextualRetriever:
             raise RuntimeError(f"BM25 parameters not found at: {bm25_path}")
         retriever.load_bm25(bm25_path)
 
-    logger.info(
-        f"Using Milvus retriever with collection: {collection_name}, sparse={use_sparse}, "
-        f"uri={milvus_uri}"
-    )
+    logger.info(f"Using Milvus retriever with collection: {collection_name}, sparse={use_sparse}, uri={milvus_uri}")
     return retriever
 
 
@@ -346,6 +341,7 @@ def build_reranker() -> CrossEncoderReranker:
     reranker_model = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2").strip()
     logger.info(f"Using reranker model: {reranker_model}")
     return CrossEncoderReranker(model_name=reranker_model)
+
 
 class RAGService:
     def __init__(self, storage_path: str | None):
@@ -445,11 +441,7 @@ class RAGService:
         self.retriever.index(docling_chunks)
         return doc_id
 
-    def answer_question(
-        self,
-        question: str,
-        settings: GenerationSettings,
-    ) -> QueryResponse:
+    def answer_question(self, question: str, settings: GenerationSettings) -> QueryResponse:
         tracer = trace.get_tracer(__name__)
 
         backend = "milvus" if isinstance(self.retriever, MilvusContextualRetriever) else "qdrant"
@@ -479,10 +471,7 @@ class RAGService:
                 span.set_attribute("finrag.rerank.count", len(reranked))
 
             draft_prompt = build_draft_prompt(
-                question,
-                reranked,
-                draft_max_tokens=settings.draft_max_tokens,
-                answer_style=settings.answer_style,
+                question, reranked, draft_max_tokens=settings.draft_max_tokens, answer_style=settings.answer_style
             )
             with tracer.start_as_current_span("finrag.llm.draft") as span:
                 if system:
@@ -591,10 +580,7 @@ def health():
 
 @app.get("/generation_presets")
 def generation_presets():
-    return {
-        "default_mode": default_mode(),
-        "presets": [p.to_public_dict() for p in list_generation_presets()],
-    }
+    return {"default_mode": default_mode(), "presets": [p.to_public_dict() for p in list_generation_presets()]}
 
 
 @app.post("/ingest")
@@ -1152,13 +1138,8 @@ def _read_history(*, limit: int = 50, summary: bool = False) -> list[dict]:
             {
                 "id": payload.get("id"),
                 "created_at": payload.get("created_at"),
-                "request": {
-                    "question": req.get("question"),
-                    "mode": req.get("mode"),
-                },
-                "response": {
-                    "top_chunks_count": len(top_chunks),
-                },
+                "request": {"question": req.get("question"), "mode": req.get("mode")},
+                "response": {"top_chunks_count": len(top_chunks)},
             }
         )
     return out

@@ -19,6 +19,7 @@ class ChatMessage(TypedDict):
 class LLMClient(Protocol):
     chat_model: str
     embed_model: str
+
     def embed_texts(self, texts: list[str]) -> np.ndarray: ...
 
     def chat(self, messages: list[ChatMessage], temperature: float = 0.1) -> str: ...

@@ -156,4 +156,3 @@ def resolve_generation_settings(
         answer_style=resolved_style,
         draft_temperature=resolved_temp,
     )
-

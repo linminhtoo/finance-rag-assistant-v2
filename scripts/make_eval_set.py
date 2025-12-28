@@ -7,12 +7,13 @@ from finrag.eval.generation import generate_eval_items_from_chunks
 from finrag.eval.io import dump_jsonl
 from finrag.eval.sec_corpus import load_sec_download_dir
 from finrag.llm_clients import get_llm_client
-from finrag.sec_chunking import SecHtmlChunker
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def main() -> None:
+    raise NotImplementedError("Deprecated script. Logic needs to be updated to sync with the latest pipeline.")
+
     ap = argparse.ArgumentParser(description="Generate a synthetic eval set from downloaded SEC filings (JSONL).")
     ap.add_argument("--data-dir", required=True, help="Directory containing `10k_raw/` and `meta/`")
     ap.add_argument("--out", required=True, help="Output JSONL path")
@@ -36,6 +37,7 @@ def main() -> None:
     if not docs:
         raise SystemExit("No documents found. Check --data-dir and filters.")
 
+    # FIXME: SecHtmlChunker is deprecated, need to update to the latest chunking logic
     chunker = SecHtmlChunker(max_words=args.max_words, overlap_words=args.overlap_words)
     chunks = []
     doc_meta_by_id = {}
