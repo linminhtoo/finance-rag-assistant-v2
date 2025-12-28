@@ -396,6 +396,7 @@ class Args:
     log_prompt_token_count: bool
     max_prompt_tokens: int
     max_image_long_side: int
+    image_expansion_ratio: float
     timeout: int
     max_retries: int
     max_concurrency: int
@@ -469,6 +470,12 @@ def parse_args() -> Args:
         type=int,
         default=0,
         help="If >0, downscale images so max(width,height) <= this before sending to LLM.",
+    )
+    parser.add_argument(
+        "--image-expansion-ratio",
+        type=float,
+        default=0.01,
+        help="The ratio to expand each table's image by when cropping.",
     )
     parser.add_argument("--timeout", type=int, default=30, help="Request timeout in seconds.")
     parser.add_argument(
@@ -640,6 +647,7 @@ def parse_args() -> Args:
         log_prompt_token_count=args.log_prompt_token_count,
         max_prompt_tokens=args.max_prompt_tokens,
         max_image_long_side=args.max_image_long_side,
+        image_expansion_ratio=args.image_expansion_ratio,
         timeout=args.timeout,
         max_retries=args.max_retries,
         max_concurrency=args.max_concurrency,
@@ -1202,6 +1210,7 @@ def main():
         # LLM requests (not "batching" into a single request).
         "max_concurrency": args.max_concurrency,
         "LLMTableProcessor_max_concurrency": args.max_concurrency,
+        "LLMTableProcessor_image_expansion_ratio": args.image_expansion_ratio,
         "LLMTableProcessor_analysis_style": args.analysis_style,
         "LLMSectionHeaderProcessor_analysis_style": args.sectionheader_analysis_style,
         "LLMSectionHeaderProcessor_max_rewrite_retries": args.sectionheader_rewrite_retries,
