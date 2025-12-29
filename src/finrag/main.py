@@ -1080,6 +1080,213 @@ def get_source_text(path: str = Query(..., description="Local markdown/text file
     return {"path": str(p), "text": _read_text_file(p, max_bytes=max_bytes)}
 
 
+_INGESTED_COMPANIES_CACHE: dict[str, object] = {"path": None, "mtime_ns": None, "items": None}
+_YAHOO_COMPANY_RESOLVER: object | None = None
+
+
+def _doc_index_path() -> Path | None:
+    raw = os.getenv("FINRAG_DOC_INDEX_PATH") or os.getenv("DOC_INDEX_PATH") or ""
+    raw = raw.strip()
+    if not raw:
+        return None
+    p = Path(os.path.expanduser(raw))
+    if not p.is_absolute():
+        p = (_project_root() / p).resolve()
+    else:
+        p = p.resolve()
+    if not p.exists() or not p.is_file():
+        raise HTTPException(status_code=404, detail=f"doc_index.jsonl not found: {p}")
+    return p
+
+
+def _ticker_from_relpath(relpath: str) -> str:
+    base = Path(relpath or "").name
+    if "_" in base:
+        return base.split("_", 1)[0].strip().upper()
+    stem = Path(base).stem
+    return stem.strip().upper()
+
+
+def _strip_md_emphasis(s: str) -> str:
+    s = s.replace("**", "").replace("__", "").replace("*", "").replace("_", "")
+    return " ".join(s.split())
+
+
+def _clean_company_heading(s: str) -> str:
+    s = " ".join((s or "").split())
+    if not s:
+        return ""
+    lowered = s.lower()
+    # Remove common "noise" suffixes.
+    for token in (" table of contents", " index to", " index of", " index"):
+        if lowered.endswith(token):
+            s = s[: -len(token)].strip()
+            lowered = s.lower()
+    if " index to " in lowered:
+        s = s[: lowered.index(" index to ")].strip()
+        lowered = s.lower()
+    if " table of contents" in lowered and lowered.endswith(" table of contents"):
+        s = s[: lowered.index(" table of contents")].strip()
+        lowered = s.lower()
+    return " ".join(s.split())
+
+
+def _company_name_from_markdown(path: Path) -> str | None:
+    try:
+        text = _read_text_file(path, max_bytes=200_000)
+    except Exception:  # noqa: BLE001 - best-effort extraction
+        return None
+
+    best: tuple[int, str] | None = None
+    for line in text.splitlines()[:80]:
+        ln = line.strip()
+        if not ln.startswith("#"):
+            continue
+        level = len(ln) - len(ln.lstrip("#"))
+        ln = ln.lstrip("#").strip()
+        if not ln:
+            continue
+        ln = _strip_md_emphasis(ln)
+        ln = _clean_company_heading(ln)
+        if not ln:
+            continue
+
+        lowered = ln.lower()
+        if lowered in {"table of contents", "index", "index to", "index of"}:
+            continue
+        if "table of contents" in lowered:
+            continue
+
+        score = 0
+        if level == 1:
+            score += 3
+        if " form " in lowered or lowered.endswith(" form") or lowered.startswith("form "):
+            score += 6
+            parts = ln.split(" Form ", 1)
+            if len(parts) == 2 and parts[0].strip():
+                ln = parts[0].strip()
+            else:
+                parts = ln.split(" FORM ", 1)
+                if len(parts) == 2 and parts[0].strip():
+                    ln = parts[0].strip()
+        if any(t in lowered for t in (" corporation", " corp", " inc", " ltd", " limited", " plc", " company")):
+            score += 2
+        if " index" in lowered:
+            score -= 4
+
+        ln = _clean_company_heading(ln)
+        if not ln:
+            continue
+        if best is None or score > best[0]:
+            best = (score, ln)
+
+    if best and best[1]:
+        return best[1]
+    return None
+
+
+def _read_ingested_companies(doc_index_path: Path) -> list[dict[str, str]]:
+    def _looks_like_junk_company_name(name: str) -> bool:
+        s = " ".join((name or "").split()).strip()
+        if not s:
+            return True
+        low = s.lower()
+        if low in {"table of contents", "index", "index to", "index of"}:
+            return True
+        if "table of contents" in low:
+            return True
+        if low.startswith("index ") or " index to " in low:
+            return True
+        return False
+
+    def _resolve_company_name(ticker: str, md_path: Path) -> str:
+        use_yahoo = _env_bool("FINRAG_INGESTED_COMPANIES_USE_YAHOO", default=True)
+        if use_yahoo:
+            global _YAHOO_COMPANY_RESOLVER  # noqa: PLW0603
+            if _YAHOO_COMPANY_RESOLVER is None:
+                try:
+                    from finrag.chunk_postprocess import YahooFinanceCompanyNameResolver
+
+                    _YAHOO_COMPANY_RESOLVER = YahooFinanceCompanyNameResolver()
+                except Exception:  # noqa: BLE001 - best-effort resolver
+                    _YAHOO_COMPANY_RESOLVER = False
+            if _YAHOO_COMPANY_RESOLVER is not False:
+                try:
+                    name = _YAHOO_COMPANY_RESOLVER.resolve(ticker=ticker, cik=None)  # type: ignore[union-attr]
+                except Exception:  # noqa: BLE001 - best-effort resolver
+                    name = None
+                if isinstance(name, str) and name.strip() and not _looks_like_junk_company_name(name):
+                    return name.strip()
+
+        md_name = _company_name_from_markdown(md_path)
+        if isinstance(md_name, str) and md_name.strip() and not _looks_like_junk_company_name(md_name):
+            return md_name.strip()
+        return ticker
+
+    by_ticker: dict[str, Path] = {}
+    with doc_index_path.open("r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            relpath = str(obj.get("relpath") or "")
+            source = str(obj.get("source") or "")
+            ticker = _ticker_from_relpath(relpath or source)
+            if not ticker or ticker in by_ticker:
+                continue
+            if not source:
+                continue
+            by_ticker[ticker] = Path(source)
+
+    items: list[dict[str, str]] = []
+    for ticker, md_path in by_ticker.items():
+        company = _resolve_company_name(ticker, md_path)
+        items.append({"ticker": ticker, "company": company})
+
+    items.sort(key=lambda x: (x.get("ticker") or ""))
+    return items
+
+
+@app.get("/ingested_companies")
+def ingested_companies():
+    """
+    Return the set of tickers (and best-effort company names) available in the currently ingested dataset.
+
+    Configure by setting FINRAG_DOC_INDEX_PATH (preferred) or DOC_INDEX_PATH.
+    """
+
+    path = _doc_index_path()
+    if path is None:
+        return {"items": [], "count": 0, "path": None, "warning": "FINRAG_DOC_INDEX_PATH not set"}
+
+    mtime_ns = path.stat().st_mtime_ns
+    cached_path = _INGESTED_COMPANIES_CACHE.get("path")
+    cached_mtime = _INGESTED_COMPANIES_CACHE.get("mtime_ns")
+    cached_use_yahoo = _INGESTED_COMPANIES_CACHE.get("use_yahoo")
+    cached_items = _INGESTED_COMPANIES_CACHE.get("items")
+    use_yahoo = _env_bool("FINRAG_INGESTED_COMPANIES_USE_YAHOO", default=True)
+    if (
+        cached_path == str(path)
+        and cached_mtime == mtime_ns
+        and cached_use_yahoo == use_yahoo
+        and isinstance(cached_items, list)
+    ):
+        return {"items": cached_items, "count": len(cached_items), "path": str(path)}
+
+    items = _read_ingested_companies(path)
+    _INGESTED_COMPANIES_CACHE["path"] = str(path)
+    _INGESTED_COMPANIES_CACHE["mtime_ns"] = mtime_ns
+    _INGESTED_COMPANIES_CACHE["use_yahoo"] = use_yahoo
+    _INGESTED_COMPANIES_CACHE["items"] = items
+    return {"items": items, "count": len(items), "path": str(path)}
+
+
 class HistoryEntry(BaseModel):
     id: str
     created_at: str
