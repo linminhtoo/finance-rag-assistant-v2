@@ -5,12 +5,18 @@ from finrag.dataclasses import ScoredChunk
 from finrag.generation_controls import AnswerStyle
 from finrag.llm_clients import ChatMessage, LLMClient
 
+
+IRRELEVANT_CHUNK_IGNORE_PROMPT = (
+    "NOTE that the context may contain irrelevant chunks, especially from irrelevant companies, "
+    "which are neither related to the target company nor the question. You must ignore such irrelevant chunks."
+)
+
 _DRAFT_SYSTEM_PROMPT = (
     "You are a senior investment banking analyst. "
     "You are tasked with answering questions over SEC financial filings of publicly-traded companies. "
     "Write detailed and accurate analyses that cite the provided context. "
     "Use only the provided context to answer the question. If the context does not contain sufficient information, "
-    "state that you cannot answer the question based on the provided context."
+    "state that you cannot answer the question based on the provided context.\n" + IRRELEVANT_CHUNK_IGNORE_PROMPT
 )
 
 _REFINE_SYSTEM_PROMPT = (
@@ -21,7 +27,7 @@ _REFINE_SYSTEM_PROMPT = (
     "You must:\n"
     "1) check the draft answer against the context;\n"
     "2) fix hallucinations;\n"
-    "3) clearly state if context is insufficient."
+    "3) clearly state if context is insufficient.\n" + IRRELEVANT_CHUNK_IGNORE_PROMPT
 )
 
 _STYLE_GUIDANCE: dict[AnswerStyle, str] = {
@@ -40,8 +46,8 @@ _STYLE_GUIDANCE: dict[AnswerStyle, str] = {
 }
 
 _CITATION_GUIDANCE = (
-    "Cite sources (chunks) inline by quoting the doc_id of the chunk as [doc=...] "
-    "for the relevant claim(s). Use only the provided context."
+    "For each claim made, cite sources (chunks) in-line (NOT AT THE END) by quoting the doc_id of the chunk as [doc=...] "
+    "for the relevant claim(s). Use only the provided context. Remember to ignore irrelevant chunks."
 )
 
 
