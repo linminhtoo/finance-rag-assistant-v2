@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Financial RAG</title>
+  <title>Andromeda</title>
   <style>
     :root{
       --bg: #0b1020;
@@ -52,17 +52,17 @@
     .subtitle { color: var(--muted); font-size: 0.9rem; }
     .actions { display:flex; gap: 0.5rem; align-items:center; flex-wrap: wrap; }
     main {
-      max-width: 1400px;
+      max-width: 3000px;
       margin: 0 auto;
       padding: 1.25rem;
     }
     .grid {
       display: grid;
-      grid-template-columns: 360px 1fr;
+      grid-template-columns: clamp(220px, 16vw, 300px) 1fr;
       gap: 1rem;
       align-items: start;
     }
-    @media (max-width: 980px) {
+    @media (max-width: 1200px) {
       .grid { grid-template-columns: 1fr; }
     }
     .panel {
@@ -95,7 +95,7 @@
       color: var(--text);
       outline: none;
     }
-    textarea { min-height: 110px; resize: vertical; }
+    textarea { min-height: 60px; resize: vertical; }
     input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.45); }
     .btn {
       border: 1px solid var(--border);
@@ -138,6 +138,40 @@
       line-height: 1.45rem;
       font-size: 0.98rem;
     }
+    #answerSplit { display: flex; flex-direction: column; min-height: 0; }
+    #answerPane { min-height: 0; overflow: auto; padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); }
+    #chunksPane { min-height: 0; overflow: auto; padding-top: 0.9rem; }
+    .hSplitter {
+      flex: 0 0 14px;
+      cursor: row-resize;
+      position: relative;
+      touch-action: none;
+      user-select: none;
+    }
+    .hSplitter::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 1px;
+      background: rgba(255,255,255,0.16);
+    }
+    .hSplitter:hover::before { background: rgba(124,58,237,0.65); }
+    .hSplitter:focus-visible { outline: 2px solid rgba(124,58,237,0.85); outline-offset: -3px; }
+    .citationLink{
+      font-family: var(--mono);
+      font-size: 0.88em;
+      padding: 0.05rem 0.35rem;
+      border-radius: 10px;
+      border: 1px solid rgba(147,197,253,0.35);
+      background: rgba(147,197,253,0.10);
+      white-space: nowrap;
+    }
+    .citationLink:hover{
+      background: rgba(147,197,253,0.16);
+      text-decoration: none;
+    }
     .markdown p { margin: 0.55rem 0; }
     .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { margin: 0.8rem 0 0.4rem 0; }
     .markdown h1 { font-size: 1.25rem; }
@@ -145,6 +179,12 @@
     .markdown h3 { font-size: 1.05rem; }
     .markdown code { font-family: var(--mono); font-size: 0.9em; padding: 0.08rem 0.28rem; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; background: rgba(0,0,0,0.25); }
     .markdown pre { font-family: var(--mono); font-size: 0.86rem; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; padding: 0.75rem; overflow: auto; }
+    .markdown .tableWrap { overflow-x: auto; margin: 0.75rem 0; border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; background: rgba(0,0,0,0.22); }
+    .markdown table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; }
+    .markdown th, .markdown td { padding: 0.55rem 0.65rem; border-bottom: 1px solid rgba(255,255,255,0.08); border-right: 1px solid rgba(255,255,255,0.08); vertical-align: top; overflow-wrap: anywhere; }
+    .markdown th:last-child, .markdown td:last-child { border-right: none; }
+    .markdown thead th { background: rgba(255,255,255,0.06); font-weight: 750; }
+    .markdown tbody tr:nth-child(even) { background: rgba(255,255,255,0.03); }
     .markdown ul { margin: 0.5rem 0 0.5rem 1.25rem; }
     mark { background: rgba(34,197,94,0.22); color: var(--text); padding: 0.02rem 0.12rem; border-radius: 6px; }
     mark.active { outline: 2px solid rgba(34,197,94,0.85); background: rgba(34,197,94,0.30); }
@@ -176,6 +216,13 @@
       overflow: auto;
       white-space: pre-wrap;
     }
+    #progressLog {
+      font-size: 0.82rem;
+      line-height: 1.15rem;
+      padding: 0.45rem 0.6rem;
+      max-height: calc(2 * 1.15rem + 0.9rem);
+      overflow-y: auto;
+    }
     a { color: rgba(147,197,253,0.95); text-decoration: none; }
     a:hover { text-decoration: underline; }
     .kv { display:grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
@@ -185,18 +232,126 @@
       color: var(--muted);
       line-height: 1.2rem;
     }
+    .labelSmall { font-size: 0.84rem; }
+    .controlsRow { margin-top: 0.75rem; display:flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
+    .modeWrap { flex: 1 1 360px; min-width: 240px; position: relative; }
+    .modeSelectWrap { position: relative; }
+    .modeTooltip {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: calc(100% + 8px);
+      z-index: 20;
+      padding: 0.55rem 0.65rem;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(11,16,32,0.92);
+      box-shadow: 0 14px 35px rgba(0,0,0,0.45);
+      opacity: 0;
+      transform: translateY(4px);
+      pointer-events: none;
+      transition: opacity 120ms ease, transform 120ms ease;
+    }
+    .modeSelectWrap:hover .modeTooltip,
+    .modeSelectWrap:focus-within .modeTooltip {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .controlsRow details[open] { flex: 1 1 100%; }
+    .advancedDetails summary { padding: 0.45rem 0.65rem; }
+    .advancedDetails .toggleHint { font-size: 0.72rem; }
+    .ingestedDetails summary { padding: 0.45rem 0.65rem; }
+    .ingestedDetails .toggleHint { font-size: 0.72rem; }
+    @media (max-width: 720px) {
+      .controlsRow { flex-direction: column; align-items: stretch; }
+      .modeWrap { flex: 1 1 auto; min-width: 0; }
+    }
     .code { font-family: var(--mono); font-size: 0.86rem; }
+    .qaSplit {
+      display: flex;
+      gap: 0;
+      align-items: stretch;
+      min-width: 0;
+      --sourcesPaneWidth: 520px;
+    }
+    .qaMain {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding-right: 1rem;
+    }
+    .qaSplitter {
+      flex: 0 0 14px;
+      cursor: col-resize;
+      position: relative;
+      touch-action: none;
+      user-select: none;
+    }
+    .qaSplitter::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 1px;
+      background: rgba(255,255,255,0.16);
+    }
+    .qaSplitter:hover::before { background: rgba(124,58,237,0.65); }
+    .qaSplitter:focus-visible { outline: 2px solid rgba(124,58,237,0.85); outline-offset: -3px; }
+    .qaSources {
+      flex: 0 0 var(--sourcesPaneWidth);
+      min-width: 320px;
+      max-width: 70%;
+      min-height: 0;
+      padding-left: 1rem;
+    }
+    body.resizing {
+      cursor: col-resize;
+      user-select: none;
+    }
+    body.resizingRow {
+      cursor: row-resize;
+      user-select: none;
+    }
+	    @media (min-width: 981px) {
+	      #askPanel .panelBody { height: calc(100vh - 170px); overflow: hidden; }
+	      #askPanel .qaSplit { height: 100%; }
+	      #askPanel .qaMain { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+	      #askPanel #answerBlock { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+	      #askPanel #answerBlock { order: 1; }
+	      #askPanel #queryForm { order: 2; margin-top: auto; padding-top: 0.85rem; }
+	      #askPanel #queryForm { border-top: 1px solid var(--border); }
+	      #askPanel #queryForm textarea { min-height: 46px; max-height: 160px; }
+	      #askPanel #answerSplit { height: 100%; min-height: 0; display: flex; flex-direction: column; }
+	      #askPanel #answerSplit { --answerPanePct: 78; }
+	      #askPanel #answerPane { flex: 0 0 calc(var(--answerPanePct) * 1%); min-height: 0; overflow: auto; padding-right: 0.5rem; padding-bottom: 0.9rem; border-bottom: none; }
+	      #askPanel #answerSplitter { flex: 0 0 14px; }
+	      #askPanel #chunksPane { flex: 1 1 auto; min-height: 0; overflow: auto; padding-right: 0.5rem; padding-top: 0.9rem; }
+	      #askPanel .qaSources { min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+	      #askPanel .qaSources details { min-height: 0; }
+	      #askPanel .qaSources details[open] { height: 100%; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+	      #askPanel .qaSources details[open] .chunkBody { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
+	      #askPanel #sourceContent { flex: 1 1 auto; min-height: 0; overflow: auto; }
+	    }
+    @media (max-width: 980px) {
+      .qaSplit { flex-direction: column; }
+      .qaMain { padding-right: 0; }
+      .qaSplitter { display: none; }
+      .qaSources { flex: 0 0 auto; min-width: 0; max-width: none; width: 100%; padding-left: 0; margin-top: 1rem; }
+      #answerPane { max-height: 65vh; }
+      #chunksPane { max-height: 40vh; }
+    }
   </style>
 </head>
 <body>
   <header>
     <div class="topbar">
       <div class="brand">
-        <h1>Financial RAG</h1>
-        <div class="subtitle">Ask questions, inspect retrieved chunks, and open source docs.</div>
+        <h1>Andromeda</h1>
+        <div class="subtitle">A grounded question-answering agent for your investment needs.</div>
       </div>
       <div class="actions">
         <span class="pill" id="healthPill">checking /health…</span>
+        <button class="btn" id="newChatBtn" title="Clear the current chat view (does not delete history)">New chat</button>
         <button class="btn" id="reloadHistoryBtn" title="Reload persisted history">Reload history</button>
         <button class="btn" id="exportHistoryBtn" title="Download history as JSON">Export</button>
         <button class="btn danger" id="clearHistoryBtn" title="Delete persisted server history">Clear history</button>
@@ -212,14 +367,11 @@
         </div>
         <div class="panelBody" style="padding-bottom: 0.75rem;">
           <input id="historyFilter" type="text" placeholder="Filter by question text…" />
-          <div class="help" style="margin-top: 0.6rem;">
-            Persisted on the server at <span class="code" id="historyPath">(loading…)</span> and also cached in your browser.
-          </div>
         </div>
         <div class="historyList" id="historyList"></div>
       </section>
 
-      <section class="panel">
+      <section class="panel" id="askPanel">
         <div class="panelHeader">
           <h2>Ask</h2>
           <div class="row">
@@ -227,58 +379,133 @@
           </div>
         </div>
         <div class="panelBody">
+          <div class="qaSplit" id="qaSplit">
+            <div class="qaMain">
+	              <form id="queryForm">
+		                <label class="muted" for="question" style="font-size: 0.95rem;">Question</label>
+		                <textarea id="question" name="question" placeholder="e.g. Summarize the key risk factors mentioned in the latest filing for Company X."></textarea>
 
-          <form id="queryForm" style="margin-top: 1rem;">
-            <label class="muted" for="question">Question</label>
-            <textarea id="question" name="question" placeholder="e.g. Summarize the key risk factors mentioned in the latest filing for Company X."></textarea>
+                  <div class="controlsRow">
+	                <details class="advancedDetails">
+	                  <summary>
+	                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+	                      <strong class="labelSmall">Advanced options</strong>
+	                    </div>
+	                    <div class="muted toggleHint">toggle</div>
+	                  </summary>
+	                  <div class="chunkBody">
+                      <div class="modeWrap" style="margin-bottom: 0.75rem; flex: 1 1 auto; min-width: 0;">
+                        <label class="muted" for="genMode">Mode</label>
+                        <div class="modeSelectWrap">
+                          <select id="genMode"></select>
+                          <div class="help modeTooltip" id="genModeHelp" role="tooltip"></div>
+                        </div>
+                      </div>
+	                    <div class="kv">
+	                      <div>
+	                        <label class="muted" for="topKRetrieve">top_k_retrieve</label>
+	                        <input id="topKRetrieve" type="number" min="1" step="1" value="30" />
+	                      </div>
+	                      <div>
+	                        <label class="muted" for="topKRerank">top_k_rerank</label>
+	                        <input id="topKRerank" type="number" min="1" step="1" value="8" />
+	                      </div>
+	                      <div>
+	                        <label class="muted" for="draftMaxTokens">draft_max_tokens</label>
+	                        <input id="draftMaxTokens" type="number" min="1" step="1" value="65536" />
+	                      </div>
+	                      <div>
+	                        <label class="muted" for="finalMaxTokens">final_max_tokens</label>
+	                        <input id="finalMaxTokens" type="number" min="1" step="1" value="32768" />
+	                      </div>
+	                    </div>
+	                  </div>
+	                </details>
 
-            <div class="kv" style="margin-top: 0.75rem;">
-              <div>
-                <label class="muted" for="topKRetrieve">top_k_retrieve</label>
-                <input id="topKRetrieve" type="number" min="1" step="1" value="30" />
-              </div>
-              <div>
-                <label class="muted" for="topKRerank">top_k_rerank</label>
-                <input id="topKRerank" type="number" min="1" step="1" value="8" />
-              </div>
-              <div>
-                <label class="muted" for="draftMaxTokens">draft_max_tokens</label>
-                <input id="draftMaxTokens" type="number" min="1" step="1" value="65536" />
-              </div>
-              <div>
-                <label class="muted" for="finalMaxTokens">final_max_tokens</label>
-                <input id="finalMaxTokens" type="number" min="1" step="1" value="32768" />
-              </div>
+                  <details class="ingestedDetails" id="ingestedDetails">
+                    <summary>
+                      <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                        <strong class="labelSmall">Ingested companies</strong>
+                        <span class="pill" id="ingestedCountPill">…</span>
+                      </div>
+                      <div class="muted toggleHint">toggle</div>
+                    </summary>
+                    <div class="chunkBody">
+                      <input id="ingestedFilter" type="text" placeholder="Filter by ticker or company…" />
+                      <div class="help" id="ingestedStatus" style="margin: 0.6rem 0;"></div>
+                      <div class="chunkText" id="ingestedList" style="max-height: 180px;"></div>
+                    </div>
+                  </details>
+                  </div>
+
+                <div class="row" style="margin-top: 0.85rem;">
+                  <button class="btn primary" type="submit" id="queryBtn">Ask</button>
+                  <button class="btn danger" type="button" id="stopBtn" disabled>Stop</button>
+                  <button class="btn" type="button" id="copyAnswerBtn" disabled>Copy answer</button>
+                  <button class="btn" type="button" id="copyDebugBtn" disabled>Copy debug</button>
+                  <div class="spacer"></div>
+                  <span class="statusLine" id="queryStatus"></span>
+                </div>
+              </form>
+
+              <div id="answerBlock">
+                  <div id="answerSplit">
+                  <div id="answerPane">
+                    <div class="row" style="margin-bottom: 0.25rem;">
+                      <h3 style="margin: 0; font-size: 1rem;">Progress</h3>
+                      <div class="spacer"></div>
+                      <span class="pill" id="requestIdPill">idle</span>
+                    </div>
+                    <div class="chunkText" id="progressLog" style="margin-bottom: 0.9rem;"></div>
+
+                    <details id="draftDetails" style="margin-bottom: 0.9rem;">
+                      <summary>
+                        <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                          <strong>Draft</strong>
+                          <span class="pill" id="draftStatePill">waiting</span>
+                        </div>
+                        <div class="muted" style="font-size: 0.86rem;">toggle</div>
+                      </summary>
+                      <div class="chunkBody">
+                        <div class="answer markdown" id="draftAnswer"></div>
+                      </div>
+                    </details>
+
+                    <div class="row" style="margin-bottom: 0.25rem;">
+                      <h3 style="margin: 0; font-size: 1rem;">Final answer</h3>
+                      <div class="spacer"></div>
+                      <span class="pill" id="chunkCountPill">0 chunks</span>
+                    </div>
+                    <div class="answer markdown" id="finalAnswer"><div class="muted">Ask a question below to see the answer here.</div></div>
+                  </div>
+
+                  <div class="hSplitter" id="answerSplitter" role="separator" aria-orientation="horizontal" aria-label="Resize answer/chunks split" tabindex="0"></div>
+
+                  <div id="chunksPane">
+	                  <h3 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Reranked chunks (used for answer)</h3>
+	                  <div id="chunks"><div class="muted">No chunks yet.</div></div>
+
+	                  <details id="retrievedDetails" style="margin-top: 0.9rem;">
+	                    <summary>
+	                      <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+	                        <strong>Retrieved (pre-rerank)</strong>
+	                        <span class="pill" id="retrievedCountPill">0</span>
+	                      </div>
+	                      <div class="muted" style="font-size: 0.86rem;">toggle</div>
+	                    </summary>
+	                    <div class="chunkBody">
+	                      <div id="retrievedChunks"></div>
+	                    </div>
+	                  </details>
+                  </div>
+                </div>
+	              </div>
             </div>
 
-            <div class="row" style="margin-top: 0.85rem;">
-              <button class="btn primary" type="submit" id="queryBtn">Ask</button>
-              <button class="btn" type="button" id="copyAnswerBtn" disabled>Copy answer</button>
-              <button class="btn" type="button" id="copyDebugBtn" disabled>Copy debug</button>
-              <div class="spacer"></div>
-              <span class="statusLine" id="queryStatus"></span>
-            </div>
-          </form>
+            <div class="qaSplitter" id="qaSplitter" role="separator" aria-orientation="vertical" aria-label="Resize source viewer" tabindex="0"></div>
 
-          <div id="answerBlock" style="display:none; margin-top: 1rem;">
-            <div class="row" style="margin-bottom: 0.25rem;">
-              <h3 style="margin: 0; font-size: 1rem;">Final answer</h3>
-              <div class="spacer"></div>
-              <span class="pill" id="chunkCountPill">0 chunks</span>
-            </div>
-            <div class="answer markdown" id="finalAnswer"></div>
-
-            <div style="margin-top: 1rem;">
-              <h3 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Retrieved chunks</h3>
-              <div class="help" style="margin-bottom: 0.6rem;">
-                Use “Open source” to view the underlying PDF/Markdown. For local paths outside the allowlist, set
-                <span class="code">SOURCE_ROOTS</span> on the server.
-              </div>
-              <div id="chunks"></div>
-            </div>
-
-            <div style="margin-top: 1rem;">
-              <details id="sourceViewerDetails">
+            <aside class="qaSources" id="qaSources">
+              <details id="sourceViewerDetails" open>
                 <summary>
                   <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
                     <strong>Source viewer</strong>
@@ -295,13 +522,11 @@
                     <div class="spacer"></div>
                     <span class="statusLine" id="sourceStatus"></span>
                   </div>
-                  <div class="help" style="margin-bottom:0.6rem;">
-                    Best-effort highlighting by matching chunk text inside the source markdown. For non-markdown sources, use “Open source”.
-                  </div>
-                  <div class="chunkText" id="sourceContent" style="max-height: 52vh;"></div>
+                  <div class="help" id="sourceMeta" style="margin-bottom:0.6rem;"></div>
+                  <div class="chunkText" id="sourceContent" style="max-height: 70vh;"></div>
                 </div>
               </details>
-            </div>
+            </aside>
           </div>
         </div>
       </section>
@@ -313,6 +538,7 @@
 
     const els = {
       healthPill: $('healthPill'),
+      newChatBtn: $('newChatBtn'),
       reloadHistoryBtn: $('reloadHistoryBtn'),
       exportHistoryBtn: $('exportHistoryBtn'),
       clearHistoryBtn: $('clearHistoryBtn'),
@@ -324,15 +550,30 @@
 
       queryForm: $('queryForm'),
       question: $('question'),
+      genMode: $('genMode'),
+      genModeHelp: $('genModeHelp'),
       topKRetrieve: $('topKRetrieve'),
       topKRerank: $('topKRerank'),
       draftMaxTokens: $('draftMaxTokens'),
       finalMaxTokens: $('finalMaxTokens'),
       queryBtn: $('queryBtn'),
+      stopBtn: $('stopBtn'),
       queryStatus: $('queryStatus'),
 
       answerBlock: $('answerBlock'),
+      answerSplit: $('answerSplit'),
+      answerPane: $('answerPane'),
+      chunksPane: $('chunksPane'),
+      answerSplitter: $('answerSplitter'),
+      requestIdPill: $('requestIdPill'),
+      progressLog: $('progressLog'),
+      draftDetails: $('draftDetails'),
+      draftStatePill: $('draftStatePill'),
+      draftAnswer: $('draftAnswer'),
       finalAnswer: $('finalAnswer'),
+      retrievedDetails: $('retrievedDetails'),
+      retrievedCountPill: $('retrievedCountPill'),
+      retrievedChunks: $('retrievedChunks'),
       chunks: $('chunks'),
       chunkCountPill: $('chunkCountPill'),
 
@@ -347,10 +588,29 @@
       sourceToggleModeBtn: $('sourceToggleModeBtn'),
       sourceStatus: $('sourceStatus'),
       sourceContent: $('sourceContent'),
+      sourceMeta: $('sourceMeta'),
+
+      qaSplit: $('qaSplit'),
+      qaSplitter: $('qaSplitter'),
+      qaSources: $('qaSources'),
+
+      ingestedDetails: $('ingestedDetails'),
+      ingestedCountPill: $('ingestedCountPill'),
+      ingestedStatus: $('ingestedStatus'),
+      ingestedFilter: $('ingestedFilter'),
+      ingestedList: $('ingestedList'),
     };
 
     const LS_HISTORY = 'finrag_history_v1';
     const LS_SETTINGS = 'finrag_settings_v1';
+    const LS_UI = 'finrag_ui_v1';
+    const DEFAULT_SOURCES_PANE_WIDTH_PX = 520;
+    // vertical height split percentage for answer vs chunks panes
+    const DEFAULT_ANSWER_PANE_PCT = 85;
+
+    let generationDefaultMode = 'normal';
+    let generationPresets = [];
+    let generationPresetByKey = new Map(); // key -> preset
 
     let historyItems = [];
     let activeEntry = null;
@@ -358,9 +618,105 @@
     let sourceMode = 'raw'; // 'raw' or 'rendered'
     let lastChunksBySource = new Map(); // source -> chunks[]
     let sourceCache = new Map(); // source -> {path, text}
+    let citationTargetsByDocId = new Map(); // doc_id -> {chunk_id, source, label}
+    let lastRerankedChunks = [];
+    let lastRetrievedChunks = [];
 
     function safeText(s) {
       return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function escapeHtmlAttr(s) {
+      return String(s ?? '')
+        .replace(/&/g,'&amp;')
+        .replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;')
+        .replace(/'/g,'&#39;');
+    }
+
+    function setGenerationPresets(payload) {
+      const presets = Array.isArray(payload?.presets) ? payload.presets : [];
+      generationDefaultMode = String(payload?.default_mode || 'normal').trim().toLowerCase() || 'normal';
+      generationPresets = presets.filter(p => p && typeof p === 'object' && p.key);
+      generationPresetByKey = new Map(generationPresets.map(p => [String(p.key).toLowerCase(), p]));
+    }
+
+    async function loadGenerationPresets() {
+      try {
+        const res = await fetch('/generation_presets');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        setGenerationPresets(data);
+      } catch (e) {
+        // Fallback if the backend endpoint isn't available (e.g., old server build).
+        setGenerationPresets({
+          default_mode: 'normal',
+          presets: [
+            { key: 'quick', label: 'Quick', description: 'Fast + concise. Skips reranking and verification.', top_k_retrieve: 12, top_k_rerank: 6, draft_max_tokens: 16384, final_max_tokens: 16384 },
+            { key: 'normal', label: 'Normal', description: 'Balanced quality/speed. Uses reranking + verification.', top_k_retrieve: 30, top_k_rerank: 8, draft_max_tokens: 65536, final_max_tokens: 32768 },
+            { key: 'thinking', label: 'Thinking', description: 'Higher recall + deeper report. Retrieves/reranks more and verifies.', top_k_retrieve: 40, top_k_rerank: 12, draft_max_tokens: 65536, final_max_tokens: 45000 },
+          ],
+        });
+      }
+    }
+
+    function populateModeSelect() {
+      if (!els.genMode) return;
+      els.genMode.innerHTML = '';
+      generationPresets.forEach((p) => {
+        const opt = document.createElement('option');
+        opt.value = String(p.key || '');
+        opt.textContent = String(p.label || p.key || '');
+        els.genMode.appendChild(opt);
+      });
+    }
+
+    function updateModeHelp(key) {
+      const p = generationPresetByKey.get(String(key || '').toLowerCase());
+      if (!els.genModeHelp) return;
+      if (!p) {
+        els.genModeHelp.textContent = '';
+        els.genModeHelp.style.display = 'none';
+        return;
+      }
+      const desc = String(p.description || '').trim();
+      els.genModeHelp.textContent = desc;
+      els.genModeHelp.style.display = desc ? 'block' : 'none';
+    }
+
+    function applyModePreset(key, { overwriteAdvanced = true } = {}) {
+      const p = generationPresetByKey.get(String(key || '').toLowerCase());
+      if (!p) return;
+      if (overwriteAdvanced) {
+        if (p.top_k_retrieve) els.topKRetrieve.value = p.top_k_retrieve;
+        if (p.top_k_rerank) els.topKRerank.value = p.top_k_rerank;
+        if (p.draft_max_tokens) els.draftMaxTokens.value = p.draft_max_tokens;
+        if (p.final_max_tokens) els.finalMaxTokens.value = p.final_max_tokens;
+      }
+      updateModeHelp(key);
+    }
+
+    function extractDocMeta(chunk) {
+      const meta = chunk?.metadata;
+      if (!meta || typeof meta !== 'object') return null;
+      const doc = meta.doc;
+      if (!doc || typeof doc !== 'object') return null;
+      return doc;
+    }
+
+    function formatDocMetaLine(doc) {
+      if (!doc || typeof doc !== 'object') return '';
+      const bits = [];
+      if (doc.company) bits.push(`Company: ${safeText(doc.company)}`);
+      if (doc.ticker) bits.push(`Ticker: ${safeText(doc.ticker)}`);
+      const filingBits = [];
+      if (doc.filing_type) filingBits.push(safeText(doc.filing_type));
+      if (doc.filing_date) filingBits.push(`filed ${safeText(doc.filing_date)}`);
+      if (doc.period_end_date) filingBits.push(`period ended ${safeText(doc.period_end_date)}`);
+      if (filingBits.length) bits.push(`Filing: ${filingBits.join(', ')}`);
+      if (doc.filing_quarter) bits.push(`Quarter: ${safeText(doc.filing_quarter)}`);
+      return bits.join(' • ');
     }
 
     function sanitizeHref(href) {
@@ -370,7 +726,72 @@
       return '#';
     }
 
-    function mdInline(s) {
+    function normalizeFilingType(ft) {
+      const t = String(ft || '').toUpperCase();
+      if (!t) return '';
+      if (t.includes('10') && t.includes('Q')) return '10Q';
+      if (t.includes('10') && t.includes('K')) return '10K';
+      return t.replace(/[^A-Z0-9]/g, '');
+    }
+
+    function normalizeYearQuarter(v) {
+      const raw = String(v || '').trim();
+      if (!raw) return '';
+      const upper = raw.toUpperCase();
+      const year = upper.match(/\b(20\d{2})\b/)?.[1] || upper.match(/(20\d{2})/)?.[1] || '';
+      const quarter = upper.match(/\bQ([1-4])\b/)?.[1] || upper.match(/Q([1-4])/)?.[1] || '';
+      if (year && quarter) return `${year} Q${quarter}`;
+      if (year) return year;
+      return raw;
+    }
+
+    function formatCitationLabelFromChunk(chunk) {
+      const doc = extractDocMeta(chunk);
+      if (!doc) return '';
+      const ticker = String(doc.ticker || '').trim().toUpperCase();
+      const yq = normalizeYearQuarter(doc.filing_quarter || doc.period_end_date || doc.filing_date);
+      const form = normalizeFilingType(doc.filing_type);
+      if (ticker && yq && form) return `[${ticker} ${yq} ${form}]`;
+      return '';
+    }
+
+    function resetCitationTargets() {
+      citationTargetsByDocId = new Map();
+    }
+
+    function updateCitationTargetsFromChunks(chunks) {
+      const list = Array.isArray(chunks) ? chunks : [];
+      for (const c of list) {
+        const docId = String(c?.doc_id || '').trim();
+        const chunkId = String(c?.chunk_id || '').trim();
+        const source = String(c?.source || '').trim();
+        if (!docId || !chunkId || !source) continue;
+        if (citationTargetsByDocId.has(docId)) continue;
+        const label = formatCitationLabelFromChunk(c);
+        if (!label) continue; // doc_id is typically a UUID; only label using metadata-derived fields
+        citationTargetsByDocId.set(docId, {
+          doc_id: docId,
+          chunk_id: chunkId,
+          source,
+          label,
+        });
+      }
+    }
+
+    function linkifyDocCitations(html, { enable = false } = {}) {
+      if (!enable) return html;
+      const re = /\[(?:[^\]]*?)\bdoc\s*=\s*([^\]\s]+)(?:[^\]]*?)\]/gi;
+      return String(html ?? '').replace(re, (_m, docIdRaw) => {
+        const docId = String(docIdRaw || '').trim();
+        if (!docId) return _m;
+        const target = citationTargetsByDocId.get(docId);
+        if (!target?.label) return _m;
+        const label = target.label;
+        return `<a href="#" class="citationLink" data-doc-id="${escapeHtmlAttr(docId)}" title="${escapeHtmlAttr(docId)}">${safeText(label)}</a>`;
+      });
+    }
+
+    function mdInline(s, opts) {
       // Input is raw text; returns safe HTML.
       let out = safeText(s);
       out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -380,10 +801,36 @@
         const h = sanitizeHref(href);
         return `<a href="${h}" target="_blank" rel="noopener">${text}</a>`;
       });
+      out = linkifyDocCitations(out, { enable: Boolean(opts?.citations) });
       return out;
     }
 
-    function renderMarkdown(md) {
+    function parseMdTableRow(line) {
+      const raw = String(line ?? '');
+      if (!raw.includes('|')) return null;
+      const parts = raw.split('|');
+      const trimmed = parts.map(p => p.trim());
+      if (trimmed.length >= 2 && trimmed[0] === '') trimmed.shift();
+      if (trimmed.length >= 2 && trimmed[trimmed.length - 1] === '') trimmed.pop();
+      if (!trimmed.length) return null;
+      return trimmed;
+    }
+
+    function parseMdTableAlign(line) {
+      const cells = parseMdTableRow(line);
+      if (!cells || !cells.length) return null;
+      const aligns = [];
+      for (const c of cells) {
+        const s = String(c || '').replace(/\s+/g, '');
+        if (!/^:?-{3,}:?$/.test(s)) return null;
+        const left = s.startsWith(':');
+        const right = s.endsWith(':');
+        aligns.push(left && right ? 'center' : right ? 'right' : 'left');
+      }
+      return aligns;
+    }
+
+    function renderMarkdown(md, opts) {
       const lines = String(md ?? '').replace(/\r\n/g, '\n').split('\n');
       let html = '';
       let inCode = false;
@@ -396,7 +843,8 @@
           codeBuf = '';
         }
       };
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
         const fence = line.match(/^```/);
         if (fence) {
           if (!inCode) {
@@ -418,13 +866,50 @@
         if (heading) {
           closeList();
           const level = heading[1].length;
-          html += `<h${level}>${mdInline(heading[2])}</h${level}>`;
+          html += `<h${level}>${mdInline(heading[2], opts)}</h${level}>`;
           continue;
         }
+
+        const maybeHeader = parseMdTableRow(line);
+        const aligns = parseMdTableAlign(lines[i + 1]);
+        if (maybeHeader && aligns) {
+          closeList();
+          const headerCells = maybeHeader;
+          const colCount = Math.max(headerCells.length, aligns.length);
+          const alignAt = (idx) => String(aligns[idx] || 'left');
+          const padCells = (cells) => {
+            const out = Array.isArray(cells) ? cells.slice(0, colCount) : [];
+            while (out.length < colCount) out.push('');
+            return out;
+          };
+          const renderRow = (cells, tag) => {
+            const padded = padCells(cells);
+            return padded.map((c, idx) => `<${tag} style="text-align:${alignAt(idx)}">${mdInline(c, opts)}</${tag}>`).join('');
+          };
+
+          let j = i + 2;
+          const bodyRows = [];
+          while (j < lines.length) {
+            const rowLine = lines[j];
+            if (!String(rowLine || '').trim()) break;
+            const row = parseMdTableRow(rowLine);
+            if (!row) break;
+            bodyRows.push(row);
+            j++;
+          }
+
+          html += `<div class="tableWrap"><table><thead><tr>${renderRow(headerCells, 'th')}</tr></thead><tbody>`;
+          for (const r of bodyRows) html += `<tr>${renderRow(r, 'td')}</tr>`;
+          html += `</tbody></table></div>`;
+
+          i = j - 1;
+          continue;
+        }
+
         const li = line.match(/^\s*[-*]\s+(.*)$/);
         if (li) {
           if (!inList) { html += '<ul>'; inList = true; }
-          html += `<li>${mdInline(li[1])}</li>`;
+          html += `<li>${mdInline(li[1], opts)}</li>`;
           continue;
         }
 
@@ -434,7 +919,7 @@
           continue;
         }
         closeList();
-        html += `<p>${mdInline(line)}</p>`;
+        html += `<p>${mdInline(line, opts)}</p>`;
       }
       if (inCode) flushCode();
       if (inList) html += '</ul>';
@@ -458,33 +943,103 @@
     }
 
     function findBestSpan(text, snippet) {
+      // Backwards compat: keep API, but prefer makeSpanFinder() for performance.
+      const find = makeSpanFinder(String(text ?? ''));
+      return find(snippet);
+    }
+
+    function normalizeForSearchWithMap(text) {
+      const src = String(text ?? '');
+      const out = [];
+      const map = [];
+      let lastWasSpace = true; // trim leading spaces
+      const isWord = (ch) => {
+        if (!ch) return false;
+        const code = ch.charCodeAt(0);
+        if (code >= 48 && code <= 57) return true; // 0-9
+        if (code >= 65 && code <= 90) return true; // A-Z
+        if (code >= 97 && code <= 122) return true; // a-z
+        return ch.toLowerCase() !== ch.toUpperCase(); // best-effort unicode letters
+      };
+      const asSpace = (ch) => {
+        if (!ch) return true;
+        if (/\s/.test(ch)) return true;
+        // treat common markdown table/punctuation chars as separators
+        return ch === '|' || ch === '-' || ch === '—' || ch === '_' || ch === '/' || ch === '\\' || ch === ':' || ch === ';';
+      };
+
+      for (let i = 0; i < src.length; i++) {
+        const chRaw = src[i];
+        const ch = chRaw.toLowerCase();
+        if (isWord(ch)) {
+          out.push(ch);
+          map.push(i);
+          lastWasSpace = false;
+          continue;
+        }
+        if (!lastWasSpace && asSpace(ch)) {
+          out.push(' ');
+          map.push(i);
+          lastWasSpace = true;
+          continue;
+        }
+        if (!lastWasSpace && !asSpace(ch)) {
+          out.push(' ');
+          map.push(i);
+          lastWasSpace = true;
+        }
+      }
+      while (out.length && out[out.length - 1] === ' ') {
+        out.pop();
+        map.pop();
+      }
+      return { norm: out.join(''), map };
+    }
+
+    function makeSpanFinder(text) {
       const hay = String(text ?? '');
-      let needle = String(snippet ?? '').trim();
-      if (!hay || !needle) return null;
+      const hayNorm = normalizeForSearchWithMap(hay);
+      return (snippet) => {
+        let needle = String(snippet ?? '').trim();
+        if (!hay || !needle) return null;
 
-      if (needle.length > 240) needle = needle.slice(0, 240);
+        if (needle.length > 420) needle = needle.slice(0, 420);
 
-      let idx = hay.indexOf(needle);
-      if (idx >= 0) return { start: idx, end: idx + needle.length };
+        let idx = hay.indexOf(needle);
+        if (idx >= 0) return { start: idx, end: idx + needle.length };
 
-      // Try whitespace-insensitive match using a token regex.
-      const tokens = needle.split(/\s+/).filter(Boolean).slice(0, 30);
-      if (tokens.length >= 6) {
-        const escapeRe = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = tokens.map(escapeRe).join('\\s+');
-        const re = new RegExp(pattern, 'm');
-        const m = re.exec(hay);
-        if (m && typeof m.index === 'number') return { start: m.index, end: m.index + m[0].length };
-      }
+        // Try whitespace-insensitive match using a token regex (good for minor formatting differences).
+        const tokens = needle.split(/\s+/).filter(Boolean).slice(0, 30);
+        if (tokens.length >= 6) {
+          const escapeRe = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const pattern = tokens.map(escapeRe).join('\\s+');
+          const re = new RegExp(pattern, 'm');
+          const m = re.exec(hay);
+          if (m && typeof m.index === 'number') return { start: m.index, end: m.index + m[0].length };
+        }
 
-      // Fall back to searching a shorter prefix.
-      if (needle.length > 80) {
-        const short = needle.slice(0, 80);
-        idx = hay.indexOf(short);
-        if (idx >= 0) return { start: idx, end: idx + short.length };
-      }
+        // More forgiving: normalize away table pipes/punctuation and collapse whitespace.
+        const needleNorm = normalizeForSearchWithMap(needle).norm;
+        const n = needleNorm.length > 520 ? needleNorm.slice(0, 520) : needleNorm;
+        if (n.length >= 60) {
+          idx = hayNorm.norm.indexOf(n);
+          if (idx >= 0) {
+            const start = hayNorm.map[idx] ?? 0;
+            const endIdx = hayNorm.map[idx + n.length - 1];
+            const end = (typeof endIdx === 'number') ? (endIdx + 1) : Math.min(hay.length, start + needle.length);
+            return { start, end };
+          }
+        }
 
-      return null;
+        // Fall back to searching a shorter prefix.
+        if (needle.length > 80) {
+          const short = needle.slice(0, 80);
+          idx = hay.indexOf(short);
+          if (idx >= 0) return { start: idx, end: idx + short.length };
+        }
+
+        return null;
+      };
     }
 
     function renderTextWithMarks(text, spans, activeChunkId) {
@@ -527,6 +1082,7 @@
 
     function populateSourceSelect() {
       const sources = Array.from(lastChunksBySource.keys()).filter(isMarkdownSource);
+      const prev = String(els.sourceSelect.value || '').trim();
       els.sourceSelect.innerHTML = '';
       sources.forEach((src) => {
         const opt = document.createElement('option');
@@ -537,32 +1093,48 @@
       });
       els.sourceCountPill.textContent = `${sources.length} docs`;
       if (!sources.length) {
+        els.sourceSelect.disabled = true;
         const opt = document.createElement('option');
         opt.value = '';
         opt.textContent = 'No markdown sources in current results';
         els.sourceSelect.appendChild(opt);
+        renderSourceViewer('', null);
+        return;
       }
+      els.sourceSelect.disabled = false;
+      const selected = sources.includes(prev) ? prev : sources[0];
+      els.sourceSelect.value = selected;
+      renderSourceViewer(selected, null);
     }
 
     async function renderSourceViewer(source, activeChunkId) {
       const src = String(source || '').trim();
       if (!src || !isMarkdownSource(src)) {
+        els.sourceModePill.textContent = sourceMode;
+        els.sourceStatus.textContent = '';
+        if (els.sourceMeta) els.sourceMeta.innerHTML = '';
         els.sourceContent.innerHTML = '<div class="muted">Select a markdown source to view it here.</div>';
         return;
       }
+
+      const chunksForSrc = lastChunksBySource.get(src) || [];
+      const doc = extractDocMeta(chunksForSrc[0]);
+      const docLine = formatDocMetaLine(doc);
+      if (els.sourceMeta) els.sourceMeta.innerHTML = docLine ? docLine : '';
 
       els.sourceStatus.textContent = 'Loading…';
       try {
         const data = await loadSourceText(src);
         const text = String(data.text ?? '');
-        const chunks = lastChunksBySource.get(src) || [];
+        const chunks = chunksForSrc;
 
+        const findSpan = makeSpanFinder(text);
         const spans = [];
         for (const c of chunks) {
           const chunkId = String(c?.chunk_id || '');
           const snippet = String(c?.text || c?.preview || '').trim();
           if (!chunkId || !snippet) continue;
-          const span = findBestSpan(text, snippet);
+          const span = findSpan(snippet);
           if (!span) continue;
           spans.push({ ...span, chunk_id: chunkId });
         }
@@ -579,7 +1151,7 @@
           els.sourceStatus.textContent = spans.length ? `Highlighted ${spans.length} matches` : 'No matches found';
           if (activeChunkId) {
             const m = els.sourceContent.querySelector(`mark[data-chunk-id="${CSS.escape(activeChunkId)}"]`);
-            if (m) m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            if (m) fastScrollElementIntoView(els.sourceContent, m, { block: 'center', durationMs: 140 });
           }
         }
       } catch (e) {
@@ -587,6 +1159,48 @@
         els.sourceStatus.textContent = 'Error';
         els.sourceContent.innerHTML = `<div class="muted">Failed to load source: ${safeText(e)}</div>`;
       }
+    }
+
+    function prefersReducedMotion() {
+      try { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+    }
+
+    function fastScrollContainerTo(container, targetTop, { durationMs = 140 } = {}) {
+      const el = container;
+      if (!el) return;
+      const maxTop = Math.max(0, (el.scrollHeight || 0) - (el.clientHeight || 0));
+      const to = Math.min(maxTop, Math.max(0, Number(targetTop) || 0));
+      const from = Number(el.scrollTop) || 0;
+      const delta = to - from;
+      if (!delta) return;
+
+      if (prefersReducedMotion() || durationMs <= 0) {
+        el.scrollTop = to;
+        return;
+      }
+
+      const start = performance.now();
+      const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+      const tick = (now) => {
+        const t = Math.min(1, (now - start) / durationMs);
+        el.scrollTop = from + delta * easeOutCubic(t);
+        if (t < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+
+    function fastScrollElementIntoView(container, element, { block = 'center', durationMs = 140 } = {}) {
+      const el = container;
+      const target = element;
+      if (!el || !target) return;
+      const c = el.getBoundingClientRect();
+      const r = target.getBoundingClientRect();
+      const currentTop = Number(el.scrollTop) || 0;
+      const topDelta = (r.top - c.top);
+      let desiredTop = currentTop + topDelta;
+      if (block === 'center') desiredTop = desiredTop - (c.height / 2) + (r.height / 2);
+      if (block === 'end') desiredTop = desiredTop - c.height + r.height;
+      fastScrollContainerTo(el, desiredTop, { durationMs });
     }
 
     function fmtDate(iso) {
@@ -625,12 +1239,207 @@
       try { localStorage.setItem(LS_SETTINGS, JSON.stringify(settings)); } catch {}
     }
 
+    function readUi() {
+      try {
+        const raw = localStorage.getItem(LS_UI);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    }
+
+    function writeUi(patch) {
+      try {
+        const prev = readUi() || {};
+        const next = { ...prev, ...(patch || {}) };
+        localStorage.setItem(LS_UI, JSON.stringify(next));
+      } catch {}
+    }
+
+    function clampSourcesPaneWidth(px) {
+      const n = Number(px);
+      if (!Number.isFinite(n)) return DEFAULT_SOURCES_PANE_WIDTH_PX;
+      const rect = els.qaSplit?.getBoundingClientRect?.();
+      const containerWidth = rect?.width || 0;
+      const min = 320;
+      const max = containerWidth ? Math.max(min, Math.floor(containerWidth * 0.7)) : 900;
+      return Math.min(max, Math.max(min, Math.round(n)));
+    }
+
+    function setSourcesPaneWidth(px) {
+      if (!els.qaSplit) return null;
+      const w = clampSourcesPaneWidth(px);
+      els.qaSplit.style.setProperty('--sourcesPaneWidth', `${w}px`);
+      if (els.qaSplitter) {
+        els.qaSplitter.setAttribute('aria-valuenow', String(w));
+        els.qaSplitter.setAttribute('aria-valuemin', '320');
+      }
+      return w;
+    }
+
+    function applyUi(ui) {
+      if (!els.qaSplit) return;
+      const w = ui?.sourcesPaneWidthPx ?? ui?.sources_pane_width_px ?? null;
+      const applied = setSourcesPaneWidth(Number(w) || DEFAULT_SOURCES_PANE_WIDTH_PX);
+      if (els.qaSplitter && applied) {
+        const rect = els.qaSplit.getBoundingClientRect();
+        const max = rect?.width ? Math.max(320, Math.floor(rect.width * 0.7)) : 900;
+        els.qaSplitter.setAttribute('aria-valuemax', String(max));
+      }
+
+      const answerPct = Number(ui?.answerPanePct ?? ui?.answer_pane_pct ?? DEFAULT_ANSWER_PANE_PCT);
+      if (els.answerSplit && Number.isFinite(answerPct)) {
+        const clamped = clampAnswerPanePct(answerPct);
+        els.answerSplit.style.setProperty('--answerPanePct', String(clamped));
+        if (els.answerSplitter) {
+          els.answerSplitter.setAttribute('aria-valuenow', String(clamped));
+          els.answerSplitter.setAttribute('aria-valuemin', String(25));
+          els.answerSplitter.setAttribute('aria-valuemax', String(90));
+        }
+      }
+    }
+
+    function clampAnswerPanePct(pct) {
+      const n = Number(pct);
+      if (!Number.isFinite(n)) return DEFAULT_ANSWER_PANE_PCT;
+      return Math.min(90, Math.max(25, Math.round(n)));
+    }
+
+    function setAnswerPanePct(pct) {
+      if (!els.answerSplit) return null;
+      const clamped = clampAnswerPanePct(pct);
+      els.answerSplit.style.setProperty('--answerPanePct', String(clamped));
+      if (els.answerSplitter) els.answerSplitter.setAttribute('aria-valuenow', String(clamped));
+      return clamped;
+    }
+
+    function setupSourcesSplitter() {
+      if (!els.qaSplit || !els.qaSplitter) return;
+
+      let dragging = false;
+      const raw = getComputedStyle(els.qaSplit).getPropertyValue('--sourcesPaneWidth').trim();
+      const m = raw.match(/(\d+)\s*px/);
+      const initial = m ? Number(m[1]) : DEFAULT_SOURCES_PANE_WIDTH_PX;
+      let lastAppliedWidth = setSourcesPaneWidth(initial) || DEFAULT_SOURCES_PANE_WIDTH_PX;
+
+      const applyFromPointer = (clientX) => {
+        const rect = els.qaSplit.getBoundingClientRect();
+        const raw = rect.right - clientX;
+        const applied = setSourcesPaneWidth(raw);
+        if (typeof applied === 'number') lastAppliedWidth = applied;
+        els.qaSplitter.setAttribute('aria-valuemax', String(Math.max(320, Math.floor(rect.width * 0.7))));
+      };
+
+      const endDrag = () => {
+        if (!dragging) return;
+        dragging = false;
+        document.body.classList.remove('resizing');
+        writeUi({ sourcesPaneWidthPx: lastAppliedWidth });
+      };
+
+      els.qaSplitter.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        dragging = true;
+        document.body.classList.add('resizing');
+        try { els.qaSplitter.setPointerCapture(e.pointerId); } catch {}
+        applyFromPointer(e.clientX);
+      });
+      els.qaSplitter.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        applyFromPointer(e.clientX);
+      });
+      els.qaSplitter.addEventListener('pointerup', () => endDrag());
+      els.qaSplitter.addEventListener('pointercancel', () => endDrag());
+      els.qaSplitter.addEventListener('dblclick', () => {
+        lastAppliedWidth = setSourcesPaneWidth(DEFAULT_SOURCES_PANE_WIDTH_PX) || DEFAULT_SOURCES_PANE_WIDTH_PX;
+        writeUi({ sourcesPaneWidthPx: lastAppliedWidth });
+      });
+      els.qaSplitter.addEventListener('keydown', (e) => {
+        const step = e.shiftKey ? 60 : 20;
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          lastAppliedWidth = setSourcesPaneWidth(lastAppliedWidth + step) || lastAppliedWidth;
+          writeUi({ sourcesPaneWidthPx: lastAppliedWidth });
+        }
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          lastAppliedWidth = setSourcesPaneWidth(lastAppliedWidth - step) || lastAppliedWidth;
+          writeUi({ sourcesPaneWidthPx: lastAppliedWidth });
+        }
+      });
+
+      window.addEventListener('resize', () => {
+        lastAppliedWidth = setSourcesPaneWidth(lastAppliedWidth) || lastAppliedWidth;
+      });
+    }
+
+    function setupAnswerSplitter() {
+      if (!els.answerSplit || !els.answerPane || !els.answerSplitter) return;
+
+      let dragging = false;
+      const initial = clampAnswerPanePct(readUi()?.answerPanePct ?? DEFAULT_ANSWER_PANE_PCT);
+      let lastAppliedPct = setAnswerPanePct(initial) || DEFAULT_ANSWER_PANE_PCT;
+      els.answerSplitter.setAttribute('aria-valuemin', String(25));
+      els.answerSplitter.setAttribute('aria-valuemax', String(90));
+
+      const applyFromPointer = (clientY) => {
+        const rect = els.answerSplit.getBoundingClientRect();
+        const h = rect.height || 0;
+        if (!h) return;
+        const relative = (clientY - rect.top) / h; // 0..1
+        const pct = clampAnswerPanePct(relative * 100);
+        const applied = setAnswerPanePct(pct);
+        if (typeof applied === 'number') lastAppliedPct = applied;
+      };
+
+      const endDrag = () => {
+        if (!dragging) return;
+        dragging = false;
+        document.body.classList.remove('resizingRow');
+        writeUi({ answerPanePct: lastAppliedPct });
+      };
+
+      els.answerSplitter.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        dragging = true;
+        document.body.classList.add('resizingRow');
+        try { els.answerSplitter.setPointerCapture(e.pointerId); } catch {}
+        applyFromPointer(e.clientY);
+      });
+      els.answerSplitter.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        applyFromPointer(e.clientY);
+      });
+      els.answerSplitter.addEventListener('pointerup', () => endDrag());
+      els.answerSplitter.addEventListener('pointercancel', () => endDrag());
+      els.answerSplitter.addEventListener('dblclick', () => {
+        lastAppliedPct = setAnswerPanePct(DEFAULT_ANSWER_PANE_PCT) || DEFAULT_ANSWER_PANE_PCT;
+        writeUi({ answerPanePct: lastAppliedPct });
+      });
+      els.answerSplitter.addEventListener('keydown', (e) => {
+        const step = e.shiftKey ? 8 : 3;
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          lastAppliedPct = setAnswerPanePct(lastAppliedPct + step) || lastAppliedPct;
+          writeUi({ answerPanePct: lastAppliedPct });
+        }
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          lastAppliedPct = setAnswerPanePct(lastAppliedPct - step) || lastAppliedPct;
+          writeUi({ answerPanePct: lastAppliedPct });
+        }
+      });
+    }
+
     function currentSettings() {
       const toInt = (v, fallback) => {
         const n = Number(v);
         return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
       };
+      const mode = String(els.genMode?.value || '').trim().toLowerCase() || generationDefaultMode || 'normal';
       return {
+        mode,
         top_k_retrieve: toInt(els.topKRetrieve.value, 30),
         top_k_rerank: toInt(els.topKRerank.value, 8),
         draft_max_tokens: toInt(els.draftMaxTokens.value, 65536),
@@ -640,6 +1449,11 @@
 
     function applySettings(s) {
       if (!s) return;
+      const mode = String(s.mode || s.generation_mode || '').trim().toLowerCase() || generationDefaultMode || 'normal';
+      if (els.genMode) {
+        els.genMode.value = generationPresetByKey.has(mode) ? mode : generationDefaultMode;
+        updateModeHelp(els.genMode.value);
+      }
       if (s.top_k_retrieve) els.topKRetrieve.value = s.top_k_retrieve;
       if (s.top_k_rerank) els.topKRerank.value = s.top_k_rerank;
       if (s.draft_max_tokens) els.draftMaxTokens.value = s.draft_max_tokens;
@@ -683,11 +1497,13 @@
         const question = it?.request?.question || '(missing question)';
         const when = fmtDate(it?.created_at);
         const chunks = it?.response?.top_chunks?.length ?? 0;
+        const mode = String(it?.request?.mode || '').trim().toLowerCase();
         div.innerHTML = `
           <div class="historyQ">${safeText(question)}</div>
           <div class="historyMeta">
             <span>${safeText(when)}</span>
             <span class="pill">${chunks} chunks</span>
+            ${mode ? `<span class="pill">mode: ${safeText(mode)}</span>` : ``}
           </div>
         `;
         div.addEventListener('click', () => {
@@ -707,12 +1523,15 @@
       return '/source?path=' + encodeURIComponent(s);
     }
 
-    function renderChunks(chunks) {
+    function renderChunks(chunks, opts) {
+      const container = opts?.container || els.chunks;
+      const countPill = opts?.countPill || els.chunkCountPill;
+      const emptyText = String(opts?.emptyText || '').trim();
       const list = Array.isArray(chunks) ? chunks : [];
-      els.chunkCountPill.textContent = `${list.length} chunks`;
-      els.chunks.innerHTML = '';
+      if (countPill) countPill.textContent = `${list.length} chunks`;
+      container.innerHTML = '';
       if (!list.length) {
-        els.chunks.innerHTML = '<div class="muted">No chunks returned.</div>';
+        container.innerHTML = `<div class="muted">${safeText(emptyText || 'No chunks returned.')}</div>`;
         return;
       }
 
@@ -720,34 +1539,40 @@
         const headings = Array.isArray(c.headings) && c.headings.length ? c.headings.join(' › ') : '';
         const href = sourceHref(c.source);
         const score = (typeof c.score === 'number') ? c.score.toFixed(3) : String(c.score ?? '');
-        const preview = safeText((c.preview ?? '') + (c.preview ? '…' : ''));
+        const meta = (c && typeof c.metadata === 'object') ? c.metadata : null;
+        const doc = extractDocMeta(c);
+        const docLine = formatDocMetaLine(doc);
+        const summary = (meta && typeof meta.summary === 'string') ? meta.summary.trim() : '';
         const chunkText = String(c.text ?? '');
-        const contextText = String(c.context ?? '').trim();
         const src = String(c.source || '').trim();
         const canViewInApp = isMarkdownSource(src);
 
         const details = document.createElement('details');
         details.style.marginBottom = '0.6rem';
         details.innerHTML = `
-          <summary>
-            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
-              <span class="pill">#${idx + 1}</span>
-              <span class="pill">score=${safeText(score)}</span>
-              <span class="pill">doc=${safeText(c.doc_id ?? '')}</span>
-              <span class="pill">chunk=${safeText(c.chunk_id ?? '')}</span>
-            </div>
-            <div class="muted" style="font-size: 0.86rem;">toggle</div>
-          </summary>
+	          <summary>
+	            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+	              <span class="pill">#${idx + 1}</span>
+	              <span class="pill">score=${safeText(score)}</span>
+	              <span class="pill">doc=${safeText(c.doc_id ?? '')}</span>
+	              <span class="pill">chunk=${safeText(c.chunk_id ?? '')}</span>
+	              ${doc?.company ? `<span class="pill">co=${safeText(doc.company)}</span>` : ''}
+	              ${doc?.ticker ? `<span class="pill">ticker=${safeText(doc.ticker)}</span>` : ''}
+	              ${doc?.filing_type ? `<span class="pill">${safeText(doc.filing_type)}</span>` : ''}
+	              ${doc?.filing_date ? `<span class="pill">filed=${safeText(doc.filing_date)}</span>` : ''}
+	            </div>
+	            <div class="muted" style="font-size: 0.86rem;">toggle</div>
+	          </summary>
           <div class="chunkBody">
+            ${docLine ? `<div class="help" style="margin-bottom:0.35rem;">${docLine}</div>` : ''}
             ${headings ? `<div style="margin-bottom:0.35rem;"><strong>${safeText(headings)}</strong></div>` : ''}
-            <div class="muted" style="margin-bottom:0.55rem;">${preview}</div>
+            ${summary ? `<div class="muted" style="margin-bottom:0.35rem;">${safeText(summary)}</div>` : ''}
             <div class="row" style="margin-bottom: 0.6rem;">
               ${href ? `<a href="${href}" target="_blank" rel="noopener">Open source</a>` : '<span class="muted">No source link</span>'}
               <button class="btn" type="button" data-action="view-in-app" ${canViewInApp ? '' : 'disabled'}>View in app</button>
               <span class="pill">${canViewInApp ? 'markdown' : 'non-markdown'}</span>
             </div>
-            ${contextText ? `<div style="margin-bottom:0.55rem;"><div class="muted" style="margin-bottom:0.2rem;">Context</div><div class="chunkText">${safeText(contextText)}</div></div>` : ''}
-            ${chunkText ? `<div><div class="muted" style="margin-bottom:0.2rem;">Chunk text</div><div class="chunkText">${safeText(chunkText)}</div></div>` : '<div class="muted">No chunk text included.</div>'}
+            ${chunkText ? `<div class="chunkText">${safeText(chunkText)}</div>` : '<div class="muted">Chunk text not included yet.</div>'}
           </div>
         `;
         details.addEventListener('toggle', () => {
@@ -767,7 +1592,7 @@
             renderSourceViewer(src, String(c.chunk_id || ''));
           });
         }
-        els.chunks.appendChild(details);
+        container.appendChild(details);
       });
     }
 
@@ -775,8 +1600,14 @@
       if (!it) return;
       const res = it.response || {};
       els.answerBlock.style.display = 'block';
-      els.finalAnswer.innerHTML = renderMarkdown(String(res.final_answer ?? ''));
+      els.requestIdPill.textContent = it.id ? ('hist ' + String(it.id).slice(0, 8)) : 'history';
+      els.progressLog.textContent = '';
+      els.draftStatePill.textContent = 'done';
+      resetCitationTargets();
       const chunks = res.top_chunks || [];
+      updateCitationTargetsFromChunks(chunks);
+      els.draftAnswer.innerHTML = renderMarkdown(String(res.draft_answer ?? ''), { citations: true });
+      els.finalAnswer.innerHTML = renderMarkdown(String(res.final_answer ?? ''), { citations: true });
       renderChunks(chunks);
       lastChunksBySource = buildChunksBySource(chunks);
       populateSourceSelect();
@@ -785,13 +1616,49 @@
       els.copyDebugBtn.disabled = false;
     }
 
+    function resetChatView({ clearQuestion = true, resetAnswerSplit = false } = {}) {
+      activeEntry = null;
+      lastQueryResponse = null;
+      resetCitationTargets();
+      lastRerankedChunks = [];
+      lastRetrievedChunks = [];
+      lastChunksBySource = new Map();
+
+      if (clearQuestion) els.question.value = '';
+      els.queryStatus.textContent = '';
+      els.activeEntryPill.textContent = 'no selection';
+      renderHistory();
+
+      if (resetAnswerSplit) {
+        const applied = setAnswerPanePct(DEFAULT_ANSWER_PANE_PCT);
+        if (typeof applied === 'number') writeUi({ answerPanePct: applied });
+      }
+
+      els.answerBlock.style.display = 'block';
+      els.requestIdPill.textContent = 'idle';
+      els.progressLog.textContent = '';
+      els.draftStatePill.textContent = 'waiting';
+      els.draftAnswer.innerHTML = '';
+      els.finalAnswer.innerHTML = '<div class="muted">Ask a question below to see the answer here.</div>';
+      els.copyAnswerBtn.disabled = true;
+      els.copyDebugBtn.disabled = true;
+
+      els.retrievedCountPill.textContent = '0 chunks';
+      els.retrievedChunks.innerHTML = '';
+      if (els.retrievedDetails) els.retrievedDetails.open = false;
+      if (els.draftDetails) els.draftDetails.open = false;
+
+      renderChunks([], { container: els.chunks, countPill: els.chunkCountPill, emptyText: 'No chunks yet.' });
+      populateSourceSelect();
+    }
+
     async function loadHistoryFromServer() {
       const res = await fetch('/history?limit=200');
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const data = await res.json();
       const items = Array.isArray(data.items) ? data.items : [];
       historyItems = items;
-      if (data.path) els.historyPath.textContent = data.path;
+      if (data.path && els.historyPath) els.historyPath.textContent = data.path;
       writeLocalHistory(items);
       renderHistory();
       return items;
@@ -815,11 +1682,9 @@
         const res = await fetch('/history', { method: 'DELETE' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         historyItems = [];
-        activeEntry = null;
         writeLocalHistory([]);
         renderHistory();
-        els.activeEntryPill.textContent = 'no selection';
-        els.answerBlock.style.display = 'none';
+        resetChatView({ clearQuestion: false });
       } catch (e) {
         alert('Failed to clear history: ' + e);
       } finally {
@@ -851,40 +1716,296 @@
       }
     }
 
+    let activeStream = null; // { controller, requestId }
+
+    function appendProgress(line) {
+      const prev = String(els.progressLog.textContent || '');
+      const next = prev ? (prev + '\n' + String(line)) : String(line);
+      els.progressLog.textContent = next;
+      els.progressLog.scrollTop = els.progressLog.scrollHeight;
+    }
+
+    let ingestedCompanies = [];
+    let ingestedStatusBase = '';
+
+    function renderIngestedCompanies() {
+      if (!els.ingestedList || !els.ingestedCountPill) return;
+      const q = String(els.ingestedFilter?.value || '').trim().toLowerCase();
+      const items = Array.isArray(ingestedCompanies) ? ingestedCompanies : [];
+      const cleanCompany = (company, ticker) => {
+        const c = String(company || '').trim();
+        const t = String(ticker || '').trim();
+        const cl = c.toLowerCase();
+        if (!c) return t || '';
+        if (cl === 'table of contents' || cl.startsWith('table of contents')) return t || '';
+        if (cl === 'index' || cl.startsWith('index ')) return t || '';
+        if (cl.includes('table of contents')) return t || '';
+        return c;
+      };
+      const filtered = q
+        ? items.filter(it => {
+            const ticker = String(it?.ticker || '');
+            const company = cleanCompany(it?.company, ticker);
+            return ticker.toLowerCase().includes(q) || String(company).toLowerCase().includes(q);
+          })
+        : items;
+
+      els.ingestedCountPill.textContent = String(items.length);
+      if (els.ingestedStatus) {
+        const prefix = ingestedStatusBase ? (ingestedStatusBase + ' · ') : '';
+        els.ingestedStatus.textContent = q ? `${prefix}Showing ${filtered.length} of ${items.length}` : ingestedStatusBase;
+      }
+      if (!filtered.length) {
+        els.ingestedList.innerHTML = '<div class="muted">No matches.</div>';
+        return;
+      }
+      els.ingestedList.innerHTML = filtered
+        .map(it => {
+          const ticker = String(it?.ticker || '').trim();
+          const company = cleanCompany(it?.company, ticker);
+          return `<div class="code">${safeText(ticker)} — ${safeText(company)}</div>`;
+        })
+        .join('');
+    }
+
+    async function loadIngestedCompanies() {
+      if (!els.ingestedStatus || !els.ingestedList || !els.ingestedCountPill) return;
+      ingestedStatusBase = 'Loading…';
+      els.ingestedStatus.textContent = ingestedStatusBase;
+      els.ingestedCountPill.textContent = '…';
+      try {
+        const res = await fetch('/ingested_companies');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        ingestedCompanies = Array.isArray(data?.items) ? data.items : [];
+        ingestedStatusBase = data?.path ? `From ${String(data.path)}` : (data?.warning ? String(data.warning) : '');
+        renderIngestedCompanies();
+      } catch (e) {
+        ingestedStatusBase = 'Failed to load. Set FINRAG_DOC_INDEX_PATH and reload.';
+        els.ingestedStatus.textContent = ingestedStatusBase;
+        els.ingestedList.innerHTML = '<div class="muted">Unavailable.</div>';
+        els.ingestedCountPill.textContent = '0';
+      }
+    }
+
+    async function stopActiveQuery() {
+      const stream = activeStream;
+      if (!stream) return;
+      try { stream.controller.abort(); } catch {}
+      const rid = stream.requestId;
+      if (rid) {
+        fetch('/cancel', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ request_id: rid }),
+        }).catch(() => {});
+      }
+      activeStream = null;
+    }
+
     async function doQuery(question) {
       const settings = currentSettings();
       writeSettings(settings);
 
       els.queryBtn.disabled = true;
-      els.queryStatus.textContent = 'Retrieving & generating…';
+      els.stopBtn.disabled = false;
+      els.queryStatus.textContent = 'Starting…';
       els.copyAnswerBtn.disabled = true;
       els.copyDebugBtn.disabled = true;
+
+      els.answerBlock.style.display = 'block';
+      els.requestIdPill.textContent = '…';
+      els.progressLog.textContent = '';
+      els.draftStatePill.textContent = 'waiting';
+      els.draftAnswer.innerHTML = '';
+      els.finalAnswer.innerHTML = '';
+      els.retrievedCountPill.textContent = '0 chunks';
+      els.retrievedChunks.innerHTML = '';
+      renderChunks([], { container: els.chunks, countPill: els.chunkCountPill });
+      lastChunksBySource = new Map();
+      populateSourceSelect();
+      resetCitationTargets();
+      lastRerankedChunks = [];
+      lastRetrievedChunks = [];
+
+      let draftText = '';
+      let finalText = '';
+      let draftRenderTimer = null;
+      let finalRenderTimer = null;
+      let streamState = null;
+
       try {
-        const res = await fetch('/query', {
+        await stopActiveQuery();
+        const controller = new AbortController();
+        streamState = { controller, requestId: null };
+        activeStream = streamState;
+
+        const res = await fetch('/query_stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ question, ...settings }),
+          signal: controller.signal,
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const data = await res.json();
-        lastQueryResponse = data;
-        els.answerBlock.style.display = 'block';
-        els.finalAnswer.innerHTML = renderMarkdown(String(data.final_answer ?? ''));
-        const chunks = data.top_chunks || [];
-        renderChunks(chunks);
-        lastChunksBySource = buildChunksBySource(chunks);
-        populateSourceSelect();
-        els.queryStatus.textContent = '';
-        els.copyAnswerBtn.disabled = !String(data.final_answer ?? '').trim();
-        els.copyDebugBtn.disabled = false;
 
-        // Refresh persisted history so the new entry shows up with its server timestamp/id.
-        await loadHistoryFromServer();
+        const reader = res.body?.getReader();
+        if (!reader) throw new Error('Missing response body');
+
+        const decoder = new TextDecoder();
+        let buf = '';
+        const scheduleDraftRender = () => {
+          if (draftRenderTimer) return;
+          draftRenderTimer = setTimeout(() => {
+            els.draftAnswer.innerHTML = renderMarkdown(draftText, { citations: true });
+            draftRenderTimer = null;
+          }, 120);
+        };
+        const scheduleFinalRender = () => {
+          if (finalRenderTimer) return;
+          finalRenderTimer = setTimeout(() => {
+            els.finalAnswer.innerHTML = renderMarkdown(finalText, { citations: true });
+            finalRenderTimer = null;
+          }, 120);
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          let idx;
+          while ((idx = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, idx);
+            buf = buf.slice(idx + 1);
+            if (!line.trim()) continue;
+            let evt = null;
+            try { evt = JSON.parse(line); } catch { continue; }
+
+            const type = String(evt?.type || '');
+            if (type === 'start') {
+              streamState.requestId = String(evt?.request_id || '');
+              els.requestIdPill.textContent = streamState.requestId ? ('req ' + streamState.requestId.slice(0, 8)) : 'req';
+              appendProgress('Started ' + els.requestIdPill.textContent);
+              continue;
+            }
+
+            if (type === 'status') {
+              const msg = String(evt?.message || '');
+              const step = String(evt?.step || '');
+              els.queryStatus.textContent = msg || (step ? ('Step: ' + step) : '');
+              appendProgress(step ? (step + ': ' + msg) : msg);
+              if (step === 'draft') {
+                els.draftStatePill.textContent = 'streaming';
+                els.draftDetails.open = true;
+              }
+              continue;
+            }
+
+            if (type === 'retrieved') {
+              const chunks = Array.isArray(evt?.chunks) ? evt.chunks : [];
+              lastRetrievedChunks = chunks;
+              renderChunks(chunks, { container: els.retrievedChunks, countPill: els.retrievedCountPill });
+              els.retrievedDetails.open = true;
+              appendProgress('Retrieved ' + String(evt?.count ?? chunks.length) + ' chunks');
+              continue;
+            }
+
+            if (type === 'reranked') {
+              const chunks = Array.isArray(evt?.chunks) ? evt.chunks : [];
+              lastRerankedChunks = chunks;
+              updateCitationTargetsFromChunks(chunks);
+              renderChunks(chunks, { container: els.chunks, countPill: els.chunkCountPill });
+              lastChunksBySource = buildChunksBySource(chunks);
+              populateSourceSelect();
+              scheduleDraftRender();
+              scheduleFinalRender();
+              appendProgress('Reranked ' + String(evt?.count ?? chunks.length) + ' chunks');
+              continue;
+            }
+
+            if (type === 'draft_delta') {
+              const delta = String(evt?.delta || '');
+              if (delta) {
+                draftText += delta;
+                els.draftDetails.open = true;
+                scheduleDraftRender();
+              }
+              continue;
+            }
+
+            if (type === 'draft_done') {
+              els.draftStatePill.textContent = 'done';
+              appendProgress('Draft ready');
+              continue;
+            }
+
+            if (type === 'final_delta') {
+              const delta = String(evt?.delta || '');
+              if (delta) {
+                finalText += delta;
+                scheduleFinalRender();
+              }
+              continue;
+            }
+
+            if (type === 'cancelled') {
+              els.queryStatus.textContent = 'Cancelled.';
+              appendProgress('Cancelled');
+              break;
+            }
+
+            if (type === 'error') {
+              const err = String(evt?.error || 'Unknown error');
+              els.queryStatus.textContent = 'Error: ' + err;
+              appendProgress('Error: ' + err);
+              break;
+            }
+
+            if (type === 'done') {
+              const data = evt?.response || {};
+              lastQueryResponse = data;
+              els.queryStatus.textContent = '';
+
+              // Re-render with the final, full payload (includes full chunk text/context).
+              els.draftStatePill.textContent = 'done';
+              draftText = String(data.draft_answer ?? draftText);
+              finalText = String(data.final_answer ?? finalText);
+              updateCitationTargetsFromChunks(data.top_chunks || []);
+              els.draftAnswer.innerHTML = renderMarkdown(draftText, { citations: true });
+              els.finalAnswer.innerHTML = renderMarkdown(finalText, { citations: true });
+
+              const chunks = data.top_chunks || [];
+              renderChunks(chunks, { container: els.chunks, countPill: els.chunkCountPill });
+              lastChunksBySource = buildChunksBySource(chunks);
+              populateSourceSelect();
+
+              els.copyAnswerBtn.disabled = !String(finalText || '').trim();
+              els.copyDebugBtn.disabled = false;
+
+              // Refresh persisted history so the new entry shows up with its server timestamp/id.
+              await loadHistoryFromServer();
+              appendProgress('Done in ' + String(evt?.elapsed_ms ?? '') + 'ms');
+              break;
+            }
+          }
+        }
       } catch (e) {
-        console.error(e);
-        els.queryStatus.textContent = 'Error: ' + e;
+        if (String(e?.name || '') === 'AbortError') {
+          els.queryStatus.textContent = 'Cancelled.';
+          appendProgress('Cancelled');
+        } else {
+          console.error(e);
+          els.queryStatus.textContent = 'Error: ' + e;
+          appendProgress('Error: ' + e);
+        }
       } finally {
         els.queryBtn.disabled = false;
+        els.stopBtn.disabled = true;
+        if (streamState?.controller?.signal?.aborted) {
+          // Keep the request id pill for debugging.
+        } else {
+          els.requestIdPill.textContent = streamState?.requestId ? ('req ' + streamState.requestId.slice(0, 8)) : 'idle';
+        }
+        if (activeStream === streamState) activeStream = null;
       }
     }
 
@@ -898,7 +2019,15 @@
       await doQuery(q);
     });
 
+    els.stopBtn.addEventListener('click', async () => {
+      await stopActiveQuery();
+    });
+
     els.historyFilter.addEventListener('input', () => renderHistory());
+    els.newChatBtn?.addEventListener('click', async () => {
+      await stopActiveQuery();
+      resetChatView({ clearQuestion: true, resetAnswerSplit: true });
+    });
     els.reloadHistoryBtn.addEventListener('click', () => loadHistory());
     els.clearHistoryBtn.addEventListener('click', () => clearHistory());
     els.exportHistoryBtn.addEventListener('click', () => exportHistory());
@@ -918,6 +2047,58 @@
       try { await navigator.clipboard.writeText(JSON.stringify(payload, null, 2)); } catch { alert('Clipboard write failed'); }
     });
 
+    function findChunkTargetForDocId(docId) {
+      const d = String(docId || '').trim();
+      if (!d) return null;
+      const direct = citationTargetsByDocId.get(d);
+      if (direct) return direct;
+
+      const fromReranked = (Array.isArray(lastRerankedChunks) ? lastRerankedChunks : []).find(c => String(c?.doc_id || '').trim() === d);
+      if (fromReranked) {
+        const label = formatCitationLabelFromChunk(fromReranked);
+        if (!label) return null;
+        return { doc_id: d, chunk_id: String(fromReranked.chunk_id || ''), source: String(fromReranked.source || ''), label };
+      }
+
+      const fromRetrieved = (Array.isArray(lastRetrievedChunks) ? lastRetrievedChunks : []).find(c => String(c?.doc_id || '').trim() === d);
+      if (fromRetrieved) {
+        const label = formatCitationLabelFromChunk(fromRetrieved);
+        if (!label) return null;
+        return { doc_id: d, chunk_id: String(fromRetrieved.chunk_id || ''), source: String(fromRetrieved.source || ''), label };
+      }
+
+      const fromDone = (Array.isArray(lastQueryResponse?.top_chunks) ? lastQueryResponse.top_chunks : []).find(c => String(c?.doc_id || '').trim() === d);
+      if (fromDone) {
+        const label = formatCitationLabelFromChunk(fromDone);
+        if (!label) return null;
+        return { doc_id: d, chunk_id: String(fromDone.chunk_id || ''), source: String(fromDone.source || ''), label };
+      }
+
+      return null;
+    }
+
+    async function jumpToCitation(docId) {
+      const target = findChunkTargetForDocId(docId);
+      if (!target) return;
+      const src = String(target.source || '').trim();
+      const chunkId = String(target.chunk_id || '').trim();
+      if (!src || !chunkId) return;
+      els.sourceViewerDetails.open = true;
+      els.sourceSelect.value = src;
+      await renderSourceViewer(src, chunkId);
+    }
+
+    function onCitationClick(e) {
+      const link = e.target?.closest?.('a.citationLink');
+      if (!link) return;
+      e.preventDefault();
+      const docId = String(link.getAttribute('data-doc-id') || '').trim();
+      jumpToCitation(docId).catch(() => {});
+    }
+
+    els.draftAnswer?.addEventListener('click', onCitationClick);
+    els.finalAnswer?.addEventListener('click', onCitationClick);
+
     els.sourceSelect.addEventListener('change', async () => {
       await renderSourceViewer(els.sourceSelect.value, null);
     });
@@ -931,11 +2112,33 @@
       await renderSourceViewer(els.sourceSelect.value, null);
     });
 
-    (function init() {
-      applySettings(readSettings());
+    els.genMode?.addEventListener('change', () => {
+      const mode = String(els.genMode.value || '').trim().toLowerCase();
+      applyModePreset(mode, { overwriteAdvanced: true });
+      writeSettings(currentSettings());
+    });
+
+    (async function init() {
+      await loadGenerationPresets();
+      populateModeSelect();
+
+      const saved = readSettings() || {};
+      const savedMode = String(saved.mode || saved.generation_mode || '').trim().toLowerCase();
+      const mode = generationPresetByKey.has(savedMode) ? savedMode : generationDefaultMode;
+      if (els.genMode) els.genMode.value = mode;
+      applyModePreset(mode, { overwriteAdvanced: true });
+      applySettings(saved);
+
+      applyUi(readUi());
+      setupSourcesSplitter();
+      setupAnswerSplitter();
+      populateSourceSelect();
       checkHealth();
+      loadIngestedCompanies();
       loadHistory();
     })();
+
+    els.ingestedFilter?.addEventListener('input', () => renderIngestedCompanies());
   </script>
 </body>
 </html>

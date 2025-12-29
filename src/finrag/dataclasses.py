@@ -62,3 +62,4 @@ class TopChunk:
     source: str  # original file/URL
     text: str | None = None  # optional full chunk text (can be large)
     context: str | None = None  # optional situated/enriched context text
+    metadata: dict[str, Any] | None = None  # optional metadata (company, ticker, filing_date, summary, ...)

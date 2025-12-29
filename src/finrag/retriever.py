@@ -23,6 +23,10 @@ class EmbeddingError(RuntimeError):
     pass
 
 
+class CandidateTextProvider(Protocol):
+    def __call__(self, chunk: DocChunk) -> str: ...
+
+
 # -------------------------------------------------------------------
 # Hybrid retriever: Qdrant + BM25
 # -------------------------------------------------------------------
@@ -158,6 +162,19 @@ class QdrantHybridRetriever:
         """
 
         return {chunk_id for chunk_id in chunk_ids if chunk_id in self._qdrant_id_by_chunk_id}
+
+    def text_for_rerank(self, chunk: DocChunk) -> str:
+        """
+        Text used when reranking retrieved chunks.
+
+        Notes
+        -----
+        For Qdrant, prefer the already-persisted contextual metadata (if present)
+        rather than recomputing context via a builder.
+        """
+
+        text, _context = self._text_for_embedding(chunk, use_builder=False)
+        return text
 
     def _load_bm25(self) -> None:
         if not self._bm25_path:
@@ -325,6 +342,8 @@ class QdrantHybridRetriever:
         return out
 
     def _text_for_embedding(self, chunk: DocChunk, *, use_builder: bool) -> tuple[str, str | None]:
+        # TODO: duplicate code with MilvusContextualRetriever._text_for_embedding(),
+        # consider refactoring into a shared utility function / base class / MixIn.
         base_text = (chunk.metadata or {}).get(self._index_text_key) or chunk.text
         context = None
         meta = chunk.metadata if isinstance(chunk.metadata, dict) else {}
@@ -749,6 +768,18 @@ class MilvusContextualRetriever:
             return f"{base_text}\n\nContext: {context}", context
         return base_text, None
 
+    def text_for_rerank(self, chunk: DocChunk) -> str:
+        """
+        Text used when reranking retrieved chunks.
+
+        This intentionally reuses the same logic as `_text_for_embedding()` so
+        reranking sees the full enriched chunk representation (e.g. index text
+        and contextual metadata).
+        """
+
+        text, _context = self._text_for_embedding(chunk)
+        return text
+
     def _payload_from_chunk(self, chunk: DocChunk, context: str | None) -> dict[str, Any]:
         payload = chunk.as_payload()
         if context:
@@ -955,13 +986,30 @@ class CrossEncoderReranker:
         Users can also experiment with "BAAI/bge-reranker-v2-gemma".
     """
 
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"):
+    def __init__(
+        self,
+        model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        *,
+        candidate_text_provider: CandidateTextProvider | None = None,
+    ):
         self.model = CrossEncoder(model_name, trust_remote_code=True)
+        self._candidate_text_provider = candidate_text_provider
 
-    def rerank(self, query: str, candidates: list[ScoredChunk], top_k: int = 10) -> list[ScoredChunk]:
+    def rerank(
+        self,
+        query: str,
+        candidates: list[ScoredChunk],
+        top_k: int = 10,
+        *,
+        candidate_text_provider: CandidateTextProvider | None = None,
+    ) -> list[ScoredChunk]:
         if not candidates:
             return []
-        pairs = [(query, c.chunk.text) for c in candidates]
+        provider = candidate_text_provider or self._candidate_text_provider
+        if provider is None:
+            pairs = [(query, c.chunk.text) for c in candidates]
+        else:
+            pairs = [(query, provider(c.chunk)) for c in candidates]
         scores = self.model.predict(pairs).tolist()
         rescored = []
         for cand, score in zip(candidates, scores):
@@ -971,7 +1019,14 @@ class CrossEncoderReranker:
 
 
 class NoopReranker:
-    def rerank(self, query: str, candidates: list[ScoredChunk], top_k: int = 10) -> list[ScoredChunk]:
+    def rerank(
+        self,
+        query: str,
+        candidates: list[ScoredChunk],
+        top_k: int = 10,
+        *,
+        candidate_text_provider: CandidateTextProvider | None = None,
+    ) -> list[ScoredChunk]:
         candidates = list(candidates)
         candidates.sort(key=lambda c: c.score, reverse=True)
         return candidates[:top_k]

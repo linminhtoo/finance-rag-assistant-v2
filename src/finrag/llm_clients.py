@@ -1,4 +1,5 @@
 import os
+from collections.abc import Iterator
 from typing import Literal, Protocol, TypedDict, cast, runtime_checkable
 
 import numpy as np
@@ -16,9 +17,14 @@ class ChatMessage(TypedDict):
 
 @runtime_checkable
 class LLMClient(Protocol):
+    chat_model: str
+    embed_model: str
+
     def embed_texts(self, texts: list[str]) -> np.ndarray: ...
 
     def chat(self, messages: list[ChatMessage], temperature: float = 0.1) -> str: ...
+
+    def chat_stream(self, messages: list[ChatMessage], temperature: float = 0.1) -> Iterator[str]: ...
 
 
 class MistralClientWrapper:
@@ -49,6 +55,21 @@ class MistralClientWrapper:
             return res.choices[0].message.content  # type: ignore
         except Exception as e:
             raise RuntimeError(f"Failed to get chat response: {e}") from e
+
+    def chat_stream(self, messages: list[ChatMessage], temperature: float = 0.1) -> Iterator[str]:
+        mistral_messages = [cast(MessagesTypedDict, msg) for msg in messages]
+
+        stream = self.client.chat.stream(  # type: ignore[attr-defined]
+            model=self.chat_model, messages=mistral_messages, temperature=temperature
+        )
+        for evt in stream:
+            content = None
+            try:
+                content = evt.data.choices[0].delta.content  # type: ignore[attr-defined]
+            except Exception:
+                content = None
+            if content:
+                yield str(content)
 
 
 class OpenAIClientWrapper:
@@ -93,6 +114,19 @@ class OpenAIClientWrapper:
         except Exception as e:
             raise RuntimeError(f"Failed to get OpenAI chat response: {e}") from e
 
+    def chat_stream(self, messages: list[ChatMessage], temperature: float = 0.1) -> Iterator[str]:
+        oa_messages: list[ChatCompletionMessageParam] = [cast(ChatCompletionMessageParam, msg) for msg in messages]
+        stream = self.client.chat.completions.create(
+            model=self.chat_model, messages=oa_messages, temperature=temperature, stream=True
+        )
+        for evt in stream:
+            try:
+                delta = evt.choices[0].delta.content  # type: ignore[attr-defined]
+            except Exception:
+                delta = None
+            if delta:
+                yield str(delta)
+
 
 class FastEmbedClientWrapper:
     """
@@ -106,6 +140,7 @@ class FastEmbedClientWrapper:
             from fastembed import TextEmbedding  # type: ignore
         except Exception as e:  # pragma: no cover
             raise RuntimeError("fastembed is not available; install qdrant-client[fastembed-gpu]") from e
+        self.chat_model = ""
         self.embed_model = embed_model
         self._model = TextEmbedding(model_name=embed_model)
 
@@ -115,6 +150,9 @@ class FastEmbedClientWrapper:
 
     def chat(self, messages: list[ChatMessage], temperature: float = 0.1) -> str:  # pragma: no cover
         raise RuntimeError("FastEmbedClientWrapper does not support chat()")
+
+    def chat_stream(self, messages: list[ChatMessage], temperature: float = 0.1) -> Iterator[str]:  # pragma: no cover
+        raise RuntimeError("FastEmbedClientWrapper does not support chat_stream()")
 
 
 def get_llm_client(provider: str | None = None, langsmith_trace: bool = False, **kwargs) -> LLMClient:
