@@ -17,6 +17,7 @@ export CONTEXT_WINDOW=8
 # FIXME: MILVUS_URI only accepts https:// , so we must use MILVUS_PATH for local storage
 export MILVUS_PATH="/home/mlin/repos/z_scratch/financial-rag/data/sec_filings_md_v5/chunked_1024_128/milvus.db"
 export BM25_PATH="/home/mlin/repos/z_scratch/financial-rag/data/sec_filings_md_v5/chunked_1024_128/bm25.pkl"
+export FINRAG_DOC_INDEX_PATH="/home/mlin/repos/z_scratch/financial-rag/data/sec_filings_md_v5/chunked_1024_128/doc_index.jsonl"
 
 # optionally set HISTORY_PATH / DISABLE_HISTORY=true / SOURCE_ROOTS
 
