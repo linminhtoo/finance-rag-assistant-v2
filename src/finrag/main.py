@@ -465,7 +465,12 @@ class RAGService:
                 span.set_attribute("finrag.rerank.enabled", bool(settings.enable_rerank))
                 span.set_attribute("finrag.rerank.top_k", int(settings.top_k_rerank))
                 if settings.enable_rerank:
-                    reranked = self.reranker.rerank(question, hybrid, top_k=settings.top_k_rerank)
+                    reranked = self.reranker.rerank(
+                        question,
+                        hybrid,
+                        top_k=settings.top_k_rerank,
+                        candidate_text_provider=self.retriever.text_for_rerank,
+                    )
                 else:
                     reranked = hybrid[: settings.top_k_rerank]
                 span.set_attribute("finrag.rerank.count", len(reranked))
@@ -767,7 +772,11 @@ async def query_docs_stream(req: QueryStreamRequest, request: Request):
                 step_span.set_attribute("finrag.rerank.top_k", int(settings.top_k_rerank))
                 if settings.enable_rerank:
                     reranked = await asyncio.to_thread(
-                        rag_service.reranker.rerank, req.question, hybrid, top_k=settings.top_k_rerank
+                        rag_service.reranker.rerank,
+                        req.question,
+                        hybrid,
+                        top_k=settings.top_k_rerank,
+                        candidate_text_provider=rag_service.retriever.text_for_rerank,
                     )
                 else:
                     reranked = hybrid[: settings.top_k_rerank]
