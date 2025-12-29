@@ -95,7 +95,7 @@
       color: var(--text);
       outline: none;
     }
-    textarea { min-height: 110px; resize: vertical; }
+    textarea { min-height: 60px; resize: vertical; }
     input::placeholder, textarea::placeholder { color: rgba(255,255,255,0.45); }
     .btn {
       border: 1px solid var(--border);
@@ -262,8 +262,8 @@
       .qaMain { padding-right: 0; }
       .qaSplitter { display: none; }
       .qaSources { flex: 0 0 auto; min-width: 0; max-width: none; width: 100%; padding-left: 0; margin-top: 1rem; }
-      #answerPane { max-height: 52vh; }
-      #chunksPane { max-height: 60vh; }
+      #answerPane { max-height: 65vh; }
+      #chunksPane { max-height: 40vh; }
     }
   </style>
 </head>
@@ -646,7 +646,7 @@
       const ticker = String(doc.ticker || '').trim().toUpperCase();
       const yq = normalizeYearQuarter(doc.filing_quarter || doc.period_end_date || doc.filing_date);
       const form = normalizeFilingType(doc.filing_type);
-      if (ticker && yq && form) return `{${ticker} ${yq} ${form}]`;
+      if (ticker && yq && form) return `[${ticker} ${yq} ${form}]`;
       return '';
     }
 
@@ -1456,6 +1456,8 @@
               renderChunks(chunks, { container: els.chunks, countPill: els.chunkCountPill });
               lastChunksBySource = buildChunksBySource(chunks);
               populateSourceSelect();
+              scheduleDraftRender();
+              scheduleFinalRender();
               appendProgress('Reranked ' + String(evt?.count ?? chunks.length) + ' chunks');
               continue;
             }
