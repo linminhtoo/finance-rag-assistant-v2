@@ -1,6 +1,6 @@
-# finance-rag-assistant-v2
+# Andromeda
 
-RAG experiments over SEC filings (e.g. 10-K / 10-Q) with an end-to-end evaluation workflow.
+A financial Question-Answering assistant grounded on SEC filings.
 
 ## Quickstart: latest pipeline
 
