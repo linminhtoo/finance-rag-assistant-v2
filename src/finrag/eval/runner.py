@@ -56,7 +56,9 @@ def run_eval(
             top_k_final=cfg.top_k_retrieve,
         )
         t1 = time.perf_counter()
-        reranked = reranker.rerank(item.question, hybrid, top_k=cfg.top_k_rerank)
+        reranked = reranker.rerank(
+            item.question, hybrid, top_k=cfg.top_k_rerank, candidate_text_provider=retriever.text_for_rerank
+        )
         t2 = time.perf_counter()
 
         hybrid_chunk_ids = [sc.chunk.id for sc in hybrid]
