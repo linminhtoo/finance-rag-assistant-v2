@@ -58,7 +58,7 @@
     }
     .grid {
       display: grid;
-      grid-template-columns: clamp(280px, 22vw, 360px) 1fr;
+      grid-template-columns: clamp(220px, 16vw, 300px) 1fr;
       gap: 1rem;
       align-items: start;
     }
@@ -141,6 +141,24 @@
     #answerSplit { display: flex; flex-direction: column; min-height: 0; }
     #answerPane { min-height: 0; overflow: auto; padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); }
     #chunksPane { min-height: 0; overflow: auto; padding-top: 0.9rem; }
+    .hSplitter {
+      flex: 0 0 14px;
+      cursor: row-resize;
+      position: relative;
+      touch-action: none;
+      user-select: none;
+    }
+    .hSplitter::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 1px;
+      background: rgba(255,255,255,0.16);
+    }
+    .hSplitter:hover::before { background: rgba(124,58,237,0.65); }
+    .hSplitter:focus-visible { outline: 2px solid rgba(124,58,237,0.85); outline-offset: -3px; }
     .citationLink{
       font-family: var(--mono);
       font-size: 0.88em;
@@ -161,6 +179,12 @@
     .markdown h3 { font-size: 1.05rem; }
     .markdown code { font-family: var(--mono); font-size: 0.9em; padding: 0.08rem 0.28rem; border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; background: rgba(0,0,0,0.25); }
     .markdown pre { font-family: var(--mono); font-size: 0.86rem; background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; padding: 0.75rem; overflow: auto; }
+    .markdown .tableWrap { overflow-x: auto; margin: 0.75rem 0; border: 1px solid rgba(255,255,255,0.10); border-radius: 12px; background: rgba(0,0,0,0.22); }
+    .markdown table { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0; }
+    .markdown th, .markdown td { padding: 0.55rem 0.65rem; border-bottom: 1px solid rgba(255,255,255,0.08); border-right: 1px solid rgba(255,255,255,0.08); vertical-align: top; overflow-wrap: anywhere; }
+    .markdown th:last-child, .markdown td:last-child { border-right: none; }
+    .markdown thead th { background: rgba(255,255,255,0.06); font-weight: 750; }
+    .markdown tbody tr:nth-child(even) { background: rgba(255,255,255,0.03); }
     .markdown ul { margin: 0.5rem 0 0.5rem 1.25rem; }
     mark { background: rgba(34,197,94,0.22); color: var(--text); padding: 0.02rem 0.12rem; border-radius: 6px; }
     mark.active { outline: 2px solid rgba(34,197,94,0.85); background: rgba(34,197,94,0.30); }
@@ -192,6 +216,13 @@
       overflow: auto;
       white-space: pre-wrap;
     }
+    #progressLog {
+      font-size: 0.82rem;
+      line-height: 1.15rem;
+      padding: 0.45rem 0.6rem;
+      max-height: calc(2 * 1.15rem + 0.9rem);
+      overflow-y: auto;
+    }
     a { color: rgba(147,197,253,0.95); text-decoration: none; }
     a:hover { text-decoration: underline; }
     .kv { display:grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
@@ -201,13 +232,47 @@
       color: var(--muted);
       line-height: 1.2rem;
     }
+    .labelSmall { font-size: 0.84rem; }
+    .controlsRow { margin-top: 0.75rem; display:flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap; }
+    .modeWrap { flex: 1 1 360px; min-width: 240px; position: relative; }
+    .modeSelectWrap { position: relative; }
+    .modeTooltip {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: calc(100% + 8px);
+      z-index: 20;
+      padding: 0.55rem 0.65rem;
+      border-radius: 12px;
+      border: 1px solid rgba(255,255,255,0.14);
+      background: rgba(11,16,32,0.92);
+      box-shadow: 0 14px 35px rgba(0,0,0,0.45);
+      opacity: 0;
+      transform: translateY(4px);
+      pointer-events: none;
+      transition: opacity 120ms ease, transform 120ms ease;
+    }
+    .modeSelectWrap:hover .modeTooltip,
+    .modeSelectWrap:focus-within .modeTooltip {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .controlsRow details[open] { flex: 1 1 100%; }
+    .advancedDetails summary { padding: 0.45rem 0.65rem; }
+    .advancedDetails .toggleHint { font-size: 0.72rem; }
+    .ingestedDetails summary { padding: 0.45rem 0.65rem; }
+    .ingestedDetails .toggleHint { font-size: 0.72rem; }
+    @media (max-width: 720px) {
+      .controlsRow { flex-direction: column; align-items: stretch; }
+      .modeWrap { flex: 1 1 auto; min-width: 0; }
+    }
     .code { font-family: var(--mono); font-size: 0.86rem; }
     .qaSplit {
       display: flex;
       gap: 0;
       align-items: stretch;
       min-width: 0;
-      --sourcesPaneWidth: 900px;
+      --sourcesPaneWidth: 520px;
     }
     .qaMain {
       flex: 1 1 auto;
@@ -243,13 +308,23 @@
       cursor: col-resize;
       user-select: none;
     }
+    body.resizingRow {
+      cursor: row-resize;
+      user-select: none;
+    }
 	    @media (min-width: 981px) {
 	      #askPanel .panelBody { height: calc(100vh - 170px); overflow: hidden; }
 	      #askPanel .qaSplit { height: 100%; }
 	      #askPanel .qaMain { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 	      #askPanel #answerBlock { flex: 1 1 auto; min-height: 0; overflow: hidden; }
+	      #askPanel #answerBlock { order: 1; }
+	      #askPanel #queryForm { order: 2; margin-top: auto; padding-top: 0.85rem; }
+	      #askPanel #queryForm { border-top: 1px solid var(--border); }
+	      #askPanel #queryForm textarea { min-height: 46px; max-height: 160px; }
 	      #askPanel #answerSplit { height: 100%; min-height: 0; display: flex; flex-direction: column; }
-	      #askPanel #answerPane { flex: 0 0 54%; min-height: 0; overflow: auto; padding-right: 0.5rem; padding-bottom: 0.9rem; border-bottom: 1px solid var(--border); }
+	      #askPanel #answerSplit { --answerPanePct: 78; }
+	      #askPanel #answerPane { flex: 0 0 calc(var(--answerPanePct) * 1%); min-height: 0; overflow: auto; padding-right: 0.5rem; padding-bottom: 0.9rem; border-bottom: none; }
+	      #askPanel #answerSplitter { flex: 0 0 14px; }
 	      #askPanel #chunksPane { flex: 1 1 auto; min-height: 0; overflow: auto; padding-right: 0.5rem; padding-top: 0.9rem; }
 	      #askPanel .qaSources { min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 	      #askPanel .qaSources details { min-height: 0; }
@@ -276,6 +351,7 @@
       </div>
       <div class="actions">
         <span class="pill" id="healthPill">checking /health…</span>
+        <button class="btn" id="newChatBtn" title="Clear the current chat view (does not delete history)">New chat</button>
         <button class="btn" id="reloadHistoryBtn" title="Reload persisted history">Reload history</button>
         <button class="btn" id="exportHistoryBtn" title="Download history as JSON">Export</button>
         <button class="btn danger" id="clearHistoryBtn" title="Delete persisted server history">Clear history</button>
@@ -305,28 +381,26 @@
         <div class="panelBody">
           <div class="qaSplit" id="qaSplit">
             <div class="qaMain">
-	              <form id="queryForm" style="margin-top: 1rem;">
-	                <label class="muted" for="question">Question</label>
-	                <textarea id="question" name="question" placeholder="e.g. Summarize the key risk factors mentioned in the latest filing for Company X."></textarea>
+	              <form id="queryForm">
+		                <label class="muted" for="question" style="font-size: 0.95rem;">Question</label>
+		                <textarea id="question" name="question" placeholder="e.g. Summarize the key risk factors mentioned in the latest filing for Company X."></textarea>
 
-                  <div style="margin-top: 0.75rem;">
-                    <div class="kv">
-                      <div>
-                        <label class="muted" for="genMode">Mode</label>
-                        <select id="genMode"></select>
-                        <div class="help" id="genModeHelp" style="margin-top: 0.35rem;"></div>
-                      </div>
-                    </div>
-                  </div>
-
-	                <details style="margin-top: 0.75rem;">
+                  <div class="controlsRow">
+	                <details class="advancedDetails">
 	                  <summary>
 	                    <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
-	                      <strong>Advanced options</strong>
+	                      <strong class="labelSmall">Advanced options</strong>
 	                    </div>
-	                    <div class="muted" style="font-size: 0.86rem;">toggle</div>
+	                    <div class="muted toggleHint">toggle</div>
 	                  </summary>
 	                  <div class="chunkBody">
+                      <div class="modeWrap" style="margin-bottom: 0.75rem; flex: 1 1 auto; min-width: 0;">
+                        <label class="muted" for="genMode">Mode</label>
+                        <div class="modeSelectWrap">
+                          <select id="genMode"></select>
+                          <div class="help modeTooltip" id="genModeHelp" role="tooltip"></div>
+                        </div>
+                      </div>
 	                    <div class="kv">
 	                      <div>
 	                        <label class="muted" for="topKRetrieve">top_k_retrieve</label>
@@ -348,6 +422,22 @@
 	                  </div>
 	                </details>
 
+                  <details class="ingestedDetails" id="ingestedDetails">
+                    <summary>
+                      <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap: wrap;">
+                        <strong class="labelSmall">Ingested companies</strong>
+                        <span class="pill" id="ingestedCountPill">…</span>
+                      </div>
+                      <div class="muted toggleHint">toggle</div>
+                    </summary>
+                    <div class="chunkBody">
+                      <input id="ingestedFilter" type="text" placeholder="Filter by ticker or company…" />
+                      <div class="help" id="ingestedStatus" style="margin: 0.6rem 0;"></div>
+                      <div class="chunkText" id="ingestedList" style="max-height: 180px;"></div>
+                    </div>
+                  </details>
+                  </div>
+
                 <div class="row" style="margin-top: 0.85rem;">
                   <button class="btn primary" type="submit" id="queryBtn">Ask</button>
                   <button class="btn danger" type="button" id="stopBtn" disabled>Stop</button>
@@ -358,15 +448,15 @@
                 </div>
               </form>
 
-              <div id="answerBlock" style="display:none; margin-top: 1rem;">
-                <div id="answerSplit">
+              <div id="answerBlock">
+                  <div id="answerSplit">
                   <div id="answerPane">
                     <div class="row" style="margin-bottom: 0.25rem;">
                       <h3 style="margin: 0; font-size: 1rem;">Progress</h3>
                       <div class="spacer"></div>
                       <span class="pill" id="requestIdPill">idle</span>
                     </div>
-                    <div class="chunkText" id="progressLog" style="max-height: 18vh; margin-bottom: 0.9rem;"></div>
+                    <div class="chunkText" id="progressLog" style="margin-bottom: 0.9rem;"></div>
 
                     <details id="draftDetails" style="margin-bottom: 0.9rem;">
                       <summary>
@@ -386,15 +476,14 @@
                       <div class="spacer"></div>
                       <span class="pill" id="chunkCountPill">0 chunks</span>
                     </div>
-                    <div class="answer markdown" id="finalAnswer"></div>
+                    <div class="answer markdown" id="finalAnswer"><div class="muted">Ask a question below to see the answer here.</div></div>
                   </div>
+
+                  <div class="hSplitter" id="answerSplitter" role="separator" aria-orientation="horizontal" aria-label="Resize answer/chunks split" tabindex="0"></div>
 
                   <div id="chunksPane">
 	                  <h3 style="margin: 0 0 0.5rem 0; font-size: 1rem;">Reranked chunks (used for answer)</h3>
-	                  <div class="help" style="margin-bottom: 0.6rem;">
-	                    Use “Open source” to view the source document.
-	                  </div>
-	                  <div id="chunks"></div>
+	                  <div id="chunks"><div class="muted">No chunks yet.</div></div>
 
 	                  <details id="retrievedDetails" style="margin-top: 0.9rem;">
 	                    <summary>
@@ -449,6 +538,7 @@
 
     const els = {
       healthPill: $('healthPill'),
+      newChatBtn: $('newChatBtn'),
       reloadHistoryBtn: $('reloadHistoryBtn'),
       exportHistoryBtn: $('exportHistoryBtn'),
       clearHistoryBtn: $('clearHistoryBtn'),
@@ -471,6 +561,10 @@
       queryStatus: $('queryStatus'),
 
       answerBlock: $('answerBlock'),
+      answerSplit: $('answerSplit'),
+      answerPane: $('answerPane'),
+      chunksPane: $('chunksPane'),
+      answerSplitter: $('answerSplitter'),
       requestIdPill: $('requestIdPill'),
       progressLog: $('progressLog'),
       draftDetails: $('draftDetails'),
@@ -499,12 +593,20 @@
       qaSplit: $('qaSplit'),
       qaSplitter: $('qaSplitter'),
       qaSources: $('qaSources'),
+
+      ingestedDetails: $('ingestedDetails'),
+      ingestedCountPill: $('ingestedCountPill'),
+      ingestedStatus: $('ingestedStatus'),
+      ingestedFilter: $('ingestedFilter'),
+      ingestedList: $('ingestedList'),
     };
 
     const LS_HISTORY = 'finrag_history_v1';
     const LS_SETTINGS = 'finrag_settings_v1';
     const LS_UI = 'finrag_ui_v1';
-    const DEFAULT_SOURCES_PANE_WIDTH_PX = 620;
+    const DEFAULT_SOURCES_PANE_WIDTH_PX = 520;
+    // vertical height split percentage for answer vs chunks panes
+    const DEFAULT_ANSWER_PANE_PCT = 85;
 
     let generationDefaultMode = 'normal';
     let generationPresets = [];
@@ -575,9 +677,12 @@
       if (!els.genModeHelp) return;
       if (!p) {
         els.genModeHelp.textContent = '';
+        els.genModeHelp.style.display = 'none';
         return;
       }
-      els.genModeHelp.textContent = String(p.description || '');
+      const desc = String(p.description || '').trim();
+      els.genModeHelp.textContent = desc;
+      els.genModeHelp.style.display = desc ? 'block' : 'none';
     }
 
     function applyModePreset(key, { overwriteAdvanced = true } = {}) {
@@ -700,6 +805,31 @@
       return out;
     }
 
+    function parseMdTableRow(line) {
+      const raw = String(line ?? '');
+      if (!raw.includes('|')) return null;
+      const parts = raw.split('|');
+      const trimmed = parts.map(p => p.trim());
+      if (trimmed.length >= 2 && trimmed[0] === '') trimmed.shift();
+      if (trimmed.length >= 2 && trimmed[trimmed.length - 1] === '') trimmed.pop();
+      if (!trimmed.length) return null;
+      return trimmed;
+    }
+
+    function parseMdTableAlign(line) {
+      const cells = parseMdTableRow(line);
+      if (!cells || !cells.length) return null;
+      const aligns = [];
+      for (const c of cells) {
+        const s = String(c || '').replace(/\s+/g, '');
+        if (!/^:?-{3,}:?$/.test(s)) return null;
+        const left = s.startsWith(':');
+        const right = s.endsWith(':');
+        aligns.push(left && right ? 'center' : right ? 'right' : 'left');
+      }
+      return aligns;
+    }
+
     function renderMarkdown(md, opts) {
       const lines = String(md ?? '').replace(/\r\n/g, '\n').split('\n');
       let html = '';
@@ -713,7 +843,8 @@
           codeBuf = '';
         }
       };
-      for (const line of lines) {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
         const fence = line.match(/^```/);
         if (fence) {
           if (!inCode) {
@@ -738,6 +869,43 @@
           html += `<h${level}>${mdInline(heading[2], opts)}</h${level}>`;
           continue;
         }
+
+        const maybeHeader = parseMdTableRow(line);
+        const aligns = parseMdTableAlign(lines[i + 1]);
+        if (maybeHeader && aligns) {
+          closeList();
+          const headerCells = maybeHeader;
+          const colCount = Math.max(headerCells.length, aligns.length);
+          const alignAt = (idx) => String(aligns[idx] || 'left');
+          const padCells = (cells) => {
+            const out = Array.isArray(cells) ? cells.slice(0, colCount) : [];
+            while (out.length < colCount) out.push('');
+            return out;
+          };
+          const renderRow = (cells, tag) => {
+            const padded = padCells(cells);
+            return padded.map((c, idx) => `<${tag} style="text-align:${alignAt(idx)}">${mdInline(c, opts)}</${tag}>`).join('');
+          };
+
+          let j = i + 2;
+          const bodyRows = [];
+          while (j < lines.length) {
+            const rowLine = lines[j];
+            if (!String(rowLine || '').trim()) break;
+            const row = parseMdTableRow(rowLine);
+            if (!row) break;
+            bodyRows.push(row);
+            j++;
+          }
+
+          html += `<div class="tableWrap"><table><thead><tr>${renderRow(headerCells, 'th')}</tr></thead><tbody>`;
+          for (const r of bodyRows) html += `<tr>${renderRow(r, 'td')}</tr>`;
+          html += `</tbody></table></div>`;
+
+          i = j - 1;
+          continue;
+        }
+
         const li = line.match(/^\s*[-*]\s+(.*)$/);
         if (li) {
           if (!inList) { html += '<ul>'; inList = true; }
@@ -775,33 +943,103 @@
     }
 
     function findBestSpan(text, snippet) {
+      // Backwards compat: keep API, but prefer makeSpanFinder() for performance.
+      const find = makeSpanFinder(String(text ?? ''));
+      return find(snippet);
+    }
+
+    function normalizeForSearchWithMap(text) {
+      const src = String(text ?? '');
+      const out = [];
+      const map = [];
+      let lastWasSpace = true; // trim leading spaces
+      const isWord = (ch) => {
+        if (!ch) return false;
+        const code = ch.charCodeAt(0);
+        if (code >= 48 && code <= 57) return true; // 0-9
+        if (code >= 65 && code <= 90) return true; // A-Z
+        if (code >= 97 && code <= 122) return true; // a-z
+        return ch.toLowerCase() !== ch.toUpperCase(); // best-effort unicode letters
+      };
+      const asSpace = (ch) => {
+        if (!ch) return true;
+        if (/\s/.test(ch)) return true;
+        // treat common markdown table/punctuation chars as separators
+        return ch === '|' || ch === '-' || ch === '—' || ch === '_' || ch === '/' || ch === '\\' || ch === ':' || ch === ';';
+      };
+
+      for (let i = 0; i < src.length; i++) {
+        const chRaw = src[i];
+        const ch = chRaw.toLowerCase();
+        if (isWord(ch)) {
+          out.push(ch);
+          map.push(i);
+          lastWasSpace = false;
+          continue;
+        }
+        if (!lastWasSpace && asSpace(ch)) {
+          out.push(' ');
+          map.push(i);
+          lastWasSpace = true;
+          continue;
+        }
+        if (!lastWasSpace && !asSpace(ch)) {
+          out.push(' ');
+          map.push(i);
+          lastWasSpace = true;
+        }
+      }
+      while (out.length && out[out.length - 1] === ' ') {
+        out.pop();
+        map.pop();
+      }
+      return { norm: out.join(''), map };
+    }
+
+    function makeSpanFinder(text) {
       const hay = String(text ?? '');
-      let needle = String(snippet ?? '').trim();
-      if (!hay || !needle) return null;
+      const hayNorm = normalizeForSearchWithMap(hay);
+      return (snippet) => {
+        let needle = String(snippet ?? '').trim();
+        if (!hay || !needle) return null;
 
-      if (needle.length > 240) needle = needle.slice(0, 240);
+        if (needle.length > 420) needle = needle.slice(0, 420);
 
-      let idx = hay.indexOf(needle);
-      if (idx >= 0) return { start: idx, end: idx + needle.length };
+        let idx = hay.indexOf(needle);
+        if (idx >= 0) return { start: idx, end: idx + needle.length };
 
-      // Try whitespace-insensitive match using a token regex.
-      const tokens = needle.split(/\s+/).filter(Boolean).slice(0, 30);
-      if (tokens.length >= 6) {
-        const escapeRe = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        const pattern = tokens.map(escapeRe).join('\\s+');
-        const re = new RegExp(pattern, 'm');
-        const m = re.exec(hay);
-        if (m && typeof m.index === 'number') return { start: m.index, end: m.index + m[0].length };
-      }
+        // Try whitespace-insensitive match using a token regex (good for minor formatting differences).
+        const tokens = needle.split(/\s+/).filter(Boolean).slice(0, 30);
+        if (tokens.length >= 6) {
+          const escapeRe = (t) => String(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const pattern = tokens.map(escapeRe).join('\\s+');
+          const re = new RegExp(pattern, 'm');
+          const m = re.exec(hay);
+          if (m && typeof m.index === 'number') return { start: m.index, end: m.index + m[0].length };
+        }
 
-      // Fall back to searching a shorter prefix.
-      if (needle.length > 80) {
-        const short = needle.slice(0, 80);
-        idx = hay.indexOf(short);
-        if (idx >= 0) return { start: idx, end: idx + short.length };
-      }
+        // More forgiving: normalize away table pipes/punctuation and collapse whitespace.
+        const needleNorm = normalizeForSearchWithMap(needle).norm;
+        const n = needleNorm.length > 520 ? needleNorm.slice(0, 520) : needleNorm;
+        if (n.length >= 60) {
+          idx = hayNorm.norm.indexOf(n);
+          if (idx >= 0) {
+            const start = hayNorm.map[idx] ?? 0;
+            const endIdx = hayNorm.map[idx + n.length - 1];
+            const end = (typeof endIdx === 'number') ? (endIdx + 1) : Math.min(hay.length, start + needle.length);
+            return { start, end };
+          }
+        }
 
-      return null;
+        // Fall back to searching a shorter prefix.
+        if (needle.length > 80) {
+          const short = needle.slice(0, 80);
+          idx = hay.indexOf(short);
+          if (idx >= 0) return { start: idx, end: idx + short.length };
+        }
+
+        return null;
+      };
     }
 
     function renderTextWithMarks(text, spans, activeChunkId) {
@@ -890,12 +1128,13 @@
         const text = String(data.text ?? '');
         const chunks = chunksForSrc;
 
+        const findSpan = makeSpanFinder(text);
         const spans = [];
         for (const c of chunks) {
           const chunkId = String(c?.chunk_id || '');
           const snippet = String(c?.text || c?.preview || '').trim();
           if (!chunkId || !snippet) continue;
-          const span = findBestSpan(text, snippet);
+          const span = findSpan(snippet);
           if (!span) continue;
           spans.push({ ...span, chunk_id: chunkId });
         }
@@ -912,7 +1151,7 @@
           els.sourceStatus.textContent = spans.length ? `Highlighted ${spans.length} matches` : 'No matches found';
           if (activeChunkId) {
             const m = els.sourceContent.querySelector(`mark[data-chunk-id="${CSS.escape(activeChunkId)}"]`);
-            if (m) m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+            if (m) fastScrollElementIntoView(els.sourceContent, m, { block: 'center', durationMs: 140 });
           }
         }
       } catch (e) {
@@ -920,6 +1159,48 @@
         els.sourceStatus.textContent = 'Error';
         els.sourceContent.innerHTML = `<div class="muted">Failed to load source: ${safeText(e)}</div>`;
       }
+    }
+
+    function prefersReducedMotion() {
+      try { return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
+    }
+
+    function fastScrollContainerTo(container, targetTop, { durationMs = 140 } = {}) {
+      const el = container;
+      if (!el) return;
+      const maxTop = Math.max(0, (el.scrollHeight || 0) - (el.clientHeight || 0));
+      const to = Math.min(maxTop, Math.max(0, Number(targetTop) || 0));
+      const from = Number(el.scrollTop) || 0;
+      const delta = to - from;
+      if (!delta) return;
+
+      if (prefersReducedMotion() || durationMs <= 0) {
+        el.scrollTop = to;
+        return;
+      }
+
+      const start = performance.now();
+      const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+      const tick = (now) => {
+        const t = Math.min(1, (now - start) / durationMs);
+        el.scrollTop = from + delta * easeOutCubic(t);
+        if (t < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    }
+
+    function fastScrollElementIntoView(container, element, { block = 'center', durationMs = 140 } = {}) {
+      const el = container;
+      const target = element;
+      if (!el || !target) return;
+      const c = el.getBoundingClientRect();
+      const r = target.getBoundingClientRect();
+      const currentTop = Number(el.scrollTop) || 0;
+      const topDelta = (r.top - c.top);
+      let desiredTop = currentTop + topDelta;
+      if (block === 'center') desiredTop = desiredTop - (c.height / 2) + (r.height / 2);
+      if (block === 'end') desiredTop = desiredTop - c.height + r.height;
+      fastScrollContainerTo(el, desiredTop, { durationMs });
     }
 
     function fmtDate(iso) {
@@ -1006,6 +1287,31 @@
         const max = rect?.width ? Math.max(320, Math.floor(rect.width * 0.7)) : 900;
         els.qaSplitter.setAttribute('aria-valuemax', String(max));
       }
+
+      const answerPct = Number(ui?.answerPanePct ?? ui?.answer_pane_pct ?? DEFAULT_ANSWER_PANE_PCT);
+      if (els.answerSplit && Number.isFinite(answerPct)) {
+        const clamped = clampAnswerPanePct(answerPct);
+        els.answerSplit.style.setProperty('--answerPanePct', String(clamped));
+        if (els.answerSplitter) {
+          els.answerSplitter.setAttribute('aria-valuenow', String(clamped));
+          els.answerSplitter.setAttribute('aria-valuemin', String(25));
+          els.answerSplitter.setAttribute('aria-valuemax', String(90));
+        }
+      }
+    }
+
+    function clampAnswerPanePct(pct) {
+      const n = Number(pct);
+      if (!Number.isFinite(n)) return DEFAULT_ANSWER_PANE_PCT;
+      return Math.min(90, Math.max(25, Math.round(n)));
+    }
+
+    function setAnswerPanePct(pct) {
+      if (!els.answerSplit) return null;
+      const clamped = clampAnswerPanePct(pct);
+      els.answerSplit.style.setProperty('--answerPanePct', String(clamped));
+      if (els.answerSplitter) els.answerSplitter.setAttribute('aria-valuenow', String(clamped));
+      return clamped;
     }
 
     function setupSourcesSplitter() {
@@ -1065,6 +1371,64 @@
 
       window.addEventListener('resize', () => {
         lastAppliedWidth = setSourcesPaneWidth(lastAppliedWidth) || lastAppliedWidth;
+      });
+    }
+
+    function setupAnswerSplitter() {
+      if (!els.answerSplit || !els.answerPane || !els.answerSplitter) return;
+
+      let dragging = false;
+      const initial = clampAnswerPanePct(readUi()?.answerPanePct ?? DEFAULT_ANSWER_PANE_PCT);
+      let lastAppliedPct = setAnswerPanePct(initial) || DEFAULT_ANSWER_PANE_PCT;
+      els.answerSplitter.setAttribute('aria-valuemin', String(25));
+      els.answerSplitter.setAttribute('aria-valuemax', String(90));
+
+      const applyFromPointer = (clientY) => {
+        const rect = els.answerSplit.getBoundingClientRect();
+        const h = rect.height || 0;
+        if (!h) return;
+        const relative = (clientY - rect.top) / h; // 0..1
+        const pct = clampAnswerPanePct(relative * 100);
+        const applied = setAnswerPanePct(pct);
+        if (typeof applied === 'number') lastAppliedPct = applied;
+      };
+
+      const endDrag = () => {
+        if (!dragging) return;
+        dragging = false;
+        document.body.classList.remove('resizingRow');
+        writeUi({ answerPanePct: lastAppliedPct });
+      };
+
+      els.answerSplitter.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        dragging = true;
+        document.body.classList.add('resizingRow');
+        try { els.answerSplitter.setPointerCapture(e.pointerId); } catch {}
+        applyFromPointer(e.clientY);
+      });
+      els.answerSplitter.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        applyFromPointer(e.clientY);
+      });
+      els.answerSplitter.addEventListener('pointerup', () => endDrag());
+      els.answerSplitter.addEventListener('pointercancel', () => endDrag());
+      els.answerSplitter.addEventListener('dblclick', () => {
+        lastAppliedPct = setAnswerPanePct(DEFAULT_ANSWER_PANE_PCT) || DEFAULT_ANSWER_PANE_PCT;
+        writeUi({ answerPanePct: lastAppliedPct });
+      });
+      els.answerSplitter.addEventListener('keydown', (e) => {
+        const step = e.shiftKey ? 8 : 3;
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          lastAppliedPct = setAnswerPanePct(lastAppliedPct + step) || lastAppliedPct;
+          writeUi({ answerPanePct: lastAppliedPct });
+        }
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          lastAppliedPct = setAnswerPanePct(lastAppliedPct - step) || lastAppliedPct;
+          writeUi({ answerPanePct: lastAppliedPct });
+        }
       });
     }
 
@@ -1162,11 +1526,12 @@
     function renderChunks(chunks, opts) {
       const container = opts?.container || els.chunks;
       const countPill = opts?.countPill || els.chunkCountPill;
+      const emptyText = String(opts?.emptyText || '').trim();
       const list = Array.isArray(chunks) ? chunks : [];
       if (countPill) countPill.textContent = `${list.length} chunks`;
       container.innerHTML = '';
       if (!list.length) {
-        container.innerHTML = '<div class="muted">No chunks returned.</div>';
+        container.innerHTML = `<div class="muted">${safeText(emptyText || 'No chunks returned.')}</div>`;
         return;
       }
 
@@ -1251,6 +1616,42 @@
       els.copyDebugBtn.disabled = false;
     }
 
+    function resetChatView({ clearQuestion = true, resetAnswerSplit = false } = {}) {
+      activeEntry = null;
+      lastQueryResponse = null;
+      resetCitationTargets();
+      lastRerankedChunks = [];
+      lastRetrievedChunks = [];
+      lastChunksBySource = new Map();
+
+      if (clearQuestion) els.question.value = '';
+      els.queryStatus.textContent = '';
+      els.activeEntryPill.textContent = 'no selection';
+      renderHistory();
+
+      if (resetAnswerSplit) {
+        const applied = setAnswerPanePct(DEFAULT_ANSWER_PANE_PCT);
+        if (typeof applied === 'number') writeUi({ answerPanePct: applied });
+      }
+
+      els.answerBlock.style.display = 'block';
+      els.requestIdPill.textContent = 'idle';
+      els.progressLog.textContent = '';
+      els.draftStatePill.textContent = 'waiting';
+      els.draftAnswer.innerHTML = '';
+      els.finalAnswer.innerHTML = '<div class="muted">Ask a question below to see the answer here.</div>';
+      els.copyAnswerBtn.disabled = true;
+      els.copyDebugBtn.disabled = true;
+
+      els.retrievedCountPill.textContent = '0 chunks';
+      els.retrievedChunks.innerHTML = '';
+      if (els.retrievedDetails) els.retrievedDetails.open = false;
+      if (els.draftDetails) els.draftDetails.open = false;
+
+      renderChunks([], { container: els.chunks, countPill: els.chunkCountPill, emptyText: 'No chunks yet.' });
+      populateSourceSelect();
+    }
+
     async function loadHistoryFromServer() {
       const res = await fetch('/history?limit=200');
       if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -1281,13 +1682,9 @@
         const res = await fetch('/history', { method: 'DELETE' });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         historyItems = [];
-        activeEntry = null;
         writeLocalHistory([]);
         renderHistory();
-        els.activeEntryPill.textContent = 'no selection';
-        els.answerBlock.style.display = 'none';
-        lastChunksBySource = new Map();
-        populateSourceSelect();
+        resetChatView({ clearQuestion: false });
       } catch (e) {
         alert('Failed to clear history: ' + e);
       } finally {
@@ -1326,6 +1723,69 @@
       const next = prev ? (prev + '\n' + String(line)) : String(line);
       els.progressLog.textContent = next;
       els.progressLog.scrollTop = els.progressLog.scrollHeight;
+    }
+
+    let ingestedCompanies = [];
+    let ingestedStatusBase = '';
+
+    function renderIngestedCompanies() {
+      if (!els.ingestedList || !els.ingestedCountPill) return;
+      const q = String(els.ingestedFilter?.value || '').trim().toLowerCase();
+      const items = Array.isArray(ingestedCompanies) ? ingestedCompanies : [];
+      const cleanCompany = (company, ticker) => {
+        const c = String(company || '').trim();
+        const t = String(ticker || '').trim();
+        const cl = c.toLowerCase();
+        if (!c) return t || '';
+        if (cl === 'table of contents' || cl.startsWith('table of contents')) return t || '';
+        if (cl === 'index' || cl.startsWith('index ')) return t || '';
+        if (cl.includes('table of contents')) return t || '';
+        return c;
+      };
+      const filtered = q
+        ? items.filter(it => {
+            const ticker = String(it?.ticker || '');
+            const company = cleanCompany(it?.company, ticker);
+            return ticker.toLowerCase().includes(q) || String(company).toLowerCase().includes(q);
+          })
+        : items;
+
+      els.ingestedCountPill.textContent = String(items.length);
+      if (els.ingestedStatus) {
+        const prefix = ingestedStatusBase ? (ingestedStatusBase + ' · ') : '';
+        els.ingestedStatus.textContent = q ? `${prefix}Showing ${filtered.length} of ${items.length}` : ingestedStatusBase;
+      }
+      if (!filtered.length) {
+        els.ingestedList.innerHTML = '<div class="muted">No matches.</div>';
+        return;
+      }
+      els.ingestedList.innerHTML = filtered
+        .map(it => {
+          const ticker = String(it?.ticker || '').trim();
+          const company = cleanCompany(it?.company, ticker);
+          return `<div class="code">${safeText(ticker)} — ${safeText(company)}</div>`;
+        })
+        .join('');
+    }
+
+    async function loadIngestedCompanies() {
+      if (!els.ingestedStatus || !els.ingestedList || !els.ingestedCountPill) return;
+      ingestedStatusBase = 'Loading…';
+      els.ingestedStatus.textContent = ingestedStatusBase;
+      els.ingestedCountPill.textContent = '…';
+      try {
+        const res = await fetch('/ingested_companies');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        ingestedCompanies = Array.isArray(data?.items) ? data.items : [];
+        ingestedStatusBase = data?.path ? `From ${String(data.path)}` : (data?.warning ? String(data.warning) : '');
+        renderIngestedCompanies();
+      } catch (e) {
+        ingestedStatusBase = 'Failed to load. Set FINRAG_DOC_INDEX_PATH and reload.';
+        els.ingestedStatus.textContent = ingestedStatusBase;
+        els.ingestedList.innerHTML = '<div class="muted">Unavailable.</div>';
+        els.ingestedCountPill.textContent = '0';
+      }
     }
 
     async function stopActiveQuery() {
@@ -1564,6 +2024,10 @@
     });
 
     els.historyFilter.addEventListener('input', () => renderHistory());
+    els.newChatBtn?.addEventListener('click', async () => {
+      await stopActiveQuery();
+      resetChatView({ clearQuestion: true, resetAnswerSplit: true });
+    });
     els.reloadHistoryBtn.addEventListener('click', () => loadHistory());
     els.clearHistoryBtn.addEventListener('click', () => clearHistory());
     els.exportHistoryBtn.addEventListener('click', () => exportHistory());
@@ -1667,10 +2131,14 @@
 
       applyUi(readUi());
       setupSourcesSplitter();
+      setupAnswerSplitter();
       populateSourceSelect();
       checkHealth();
+      loadIngestedCompanies();
       loadHistory();
     })();
+
+    els.ingestedFilter?.addEventListener('input', () => renderIngestedCompanies());
   </script>
 </body>
 </html>
