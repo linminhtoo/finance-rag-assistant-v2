@@ -342,7 +342,7 @@ class QdrantHybridRetriever:
         return out
 
     def _text_for_embedding(self, chunk: DocChunk, *, use_builder: bool) -> tuple[str, str | None]:
-        # TODO: duplicate code with MilvusContextualRetriever._text_for_embedding(), 
+        # TODO: duplicate code with MilvusContextualRetriever._text_for_embedding(),
         # consider refactoring into a shared utility function / base class / MixIn.
         base_text = (chunk.metadata or {}).get(self._index_text_key) or chunk.text
         context = None
