@@ -4,6 +4,10 @@ data/**/*.json
 data/**/*.md
 debug_outputs/
 data/
+eval/
+
+ngrok
+ngrok*.tgz
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
