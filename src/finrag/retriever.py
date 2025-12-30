@@ -639,6 +639,29 @@ class MilvusContextualRetriever:
             schema.add_field(field_name="sparse_vector", datatype=DataType.SPARSE_FLOAT_VECTOR)
         schema.add_field(field_name="payload", datatype=DataType.JSON)
 
+        # TODO / FIXME: use Milvus recommended way to build BM25 index that doesn't require manual fitting of BM25 corpus
+        # see: https://milvus.io/docs/full-text-search.md#Define-the-BM25-function
+        # schema.add_field(field_name="text", datatype=DataType.VARCHAR, max_length=1000, enable_analyzer=True) # Text field
+        # schema.add_field(field_name="sparse", datatype=DataType.SPARSE_FLOAT_VECTOR) # Sparse vector field; no dim required for sparse vectors
+        # bm25_function = Function(
+        #     name="text_bm25_emb", # Function name
+        #     input_field_names=["text"], # Name of the VARCHAR field containing raw text data
+        #     output_field_names=["sparse"], # Name of the SPARSE_FLOAT_VECTOR field reserved to store generated embeddings
+        #     function_type=FunctionType.BM25, # Set to `BM25`
+        # )
+        # schema.add_function(bm25_function)
+        # index_params = client.prepare_index_params()
+        # index_params.add_index(
+        #     field_name="sparse",
+        #     index_type="SPARSE_INVERTED_INDEX",
+        #     metric_type="BM25",
+        #     params={
+        #         "inverted_index_algo": "DAAT_MAXSCORE",
+        #         "bm25_k1": 1.2,
+        #         "bm25_b": 0.75
+        #     }
+        # )
+
         index_params = self.client.prepare_index_params()
         index_params.add_index(field_name="dense_vector", index_type="FLAT", metric_type="IP")
         if self.use_sparse:
@@ -984,6 +1007,11 @@ class CrossEncoderReranker:
         Pretrained cross-encoder model name.
         Defaults to "cross-encoder/ms-marco-MiniLM-L-6-v2".
         Users can also experiment with "BAAI/bge-reranker-v2-gemma".
+
+    TODO:
+    Implement OpenAI API based reranker as an alternative.
+    This will enable more robust concurrency patterns as we will be making API calls 
+    rather than pytorch model inferences on local GPUs.
     """
 
     def __init__(
