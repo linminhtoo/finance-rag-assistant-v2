@@ -1,13 +1,16 @@
 import os
 from collections.abc import Iterator
-from typing import Literal, Protocol, TypedDict, cast, runtime_checkable
+from typing import Any, Literal, Protocol, TypedDict, cast, overload, runtime_checkable
 
 import numpy as np
 from langsmith.wrappers import wrap_openai
 from mistralai import Mistral
 from mistralai.models.chatcompletionrequest import MessagesTypedDict
+from mistralai.models.responseformat import ResponseFormatTypedDict as MistralResponseFormatTypedDict
 from openai import OpenAI
 from openai.types.chat import ChatCompletionMessageParam
+from openai.types.chat.completion_create_params import ResponseFormat as OpenAIResponseFormat
+from pydantic import BaseModel
 
 
 class ChatMessage(TypedDict):
@@ -22,9 +25,57 @@ class LLMClient(Protocol):
 
     def embed_texts(self, texts: list[str]) -> np.ndarray: ...
 
-    def chat(self, messages: list[ChatMessage], temperature: float = 0.1) -> str: ...
+    def chat(
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+    ) -> str: ...
 
-    def chat_stream(self, messages: list[ChatMessage], temperature: float = 0.1) -> Iterator[str]: ...
+    def chat_stream(
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+    ) -> Iterator[str]: ...
+
+
+@overload
+def _build_response_format(
+    *, provider: Literal["mistral"], response_model: type[BaseModel]
+) -> MistralResponseFormatTypedDict: ...
+
+
+@overload
+def _build_response_format(*, provider: Literal["openai"], response_model: type[BaseModel]) -> OpenAIResponseFormat: ...
+
+
+def _build_response_format(*, provider: Literal["mistral", "openai"], response_model: type[BaseModel]) -> Any:
+    schema = response_model.model_json_schema()
+    schema_name = response_model.__name__
+    if provider == "mistral":
+        return cast(
+            MistralResponseFormatTypedDict,
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name,
+                    "schema_definition": schema,
+                },
+            },
+        )
+    if provider == "openai":
+        return cast(
+            OpenAIResponseFormat,
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": schema_name,
+                    "schema": schema,
+                },
+            },
+        )
+    raise ValueError(f"Unsupported provider for response_format: {provider}")
 
 
 class MistralClientWrapper:
@@ -46,21 +97,41 @@ class MistralClientWrapper:
         vectors = [np.array(d.embedding, dtype=np.float32) for d in resp.data]
         return np.vstack(vectors)
 
-    def chat(self, messages: list[ChatMessage], temperature: float = 0.1) -> str:
+    def chat(
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+    ) -> str:
         mistral_messages = [cast(MessagesTypedDict, msg) for msg in messages]
+        response_format: MistralResponseFormatTypedDict | None = (
+            _build_response_format(provider="mistral", response_model=response_model) if response_model else None
+        )
         res = self.client.chat.complete(
-            model=self.chat_model, messages=mistral_messages, temperature=temperature, stream=False
+            model=self.chat_model,
+            messages=mistral_messages,
+            temperature=temperature,
+            stream=False,
+            response_format=response_format,
         )
         try:
             return res.choices[0].message.content  # type: ignore
         except Exception as e:
             raise RuntimeError(f"Failed to get chat response: {e}") from e
 
-    def chat_stream(self, messages: list[ChatMessage], temperature: float = 0.1) -> Iterator[str]:
+    def chat_stream(
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+    ) -> Iterator[str]:
         mistral_messages = [cast(MessagesTypedDict, msg) for msg in messages]
+        response_format: MistralResponseFormatTypedDict | None = (
+            _build_response_format(provider="mistral", response_model=response_model) if response_model else None
+        )
 
         stream = self.client.chat.stream(  # type: ignore[attr-defined]
-            model=self.chat_model, messages=mistral_messages, temperature=temperature
+            model=self.chat_model, messages=mistral_messages, temperature=temperature, response_format=response_format
         )
         for evt in stream:
             content = None
@@ -103,9 +174,20 @@ class OpenAIClientWrapper:
         vectors = [np.array(d.embedding, dtype=np.float32) for d in resp.data]
         return np.vstack(vectors)
 
-    def chat(self, messages: list[ChatMessage], temperature: float = 0.1) -> str:
+    def chat(
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+    ) -> str:
         oa_messages: list[ChatCompletionMessageParam] = [cast(ChatCompletionMessageParam, msg) for msg in messages]
-        res = self.client.chat.completions.create(model=self.chat_model, messages=oa_messages, temperature=temperature)
+        if response_model is None:
+            res = self.client.chat.completions.create(model=self.chat_model, messages=oa_messages, temperature=temperature)
+        else:
+            response_format = _build_response_format(provider="openai", response_model=response_model)
+            res = self.client.chat.completions.create(
+                model=self.chat_model, messages=oa_messages, temperature=temperature, response_format=response_format
+            )
         try:
             content = res.choices[0].message.content
             if content is None:
@@ -114,11 +196,26 @@ class OpenAIClientWrapper:
         except Exception as e:
             raise RuntimeError(f"Failed to get OpenAI chat response: {e}") from e
 
-    def chat_stream(self, messages: list[ChatMessage], temperature: float = 0.1) -> Iterator[str]:
+    def chat_stream(
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+    ) -> Iterator[str]:
         oa_messages: list[ChatCompletionMessageParam] = [cast(ChatCompletionMessageParam, msg) for msg in messages]
-        stream = self.client.chat.completions.create(
-            model=self.chat_model, messages=oa_messages, temperature=temperature, stream=True
-        )
+        if response_model is None:
+            stream = self.client.chat.completions.create(
+                model=self.chat_model, messages=oa_messages, temperature=temperature, stream=True
+            )
+        else:
+            response_format = _build_response_format(provider="openai", response_model=response_model)
+            stream = self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=oa_messages,
+                temperature=temperature,
+                stream=True,
+                response_format=response_format,
+            )
         for evt in stream:
             try:
                 delta = evt.choices[0].delta.content  # type: ignore[attr-defined]
@@ -148,10 +245,20 @@ class FastEmbedClientWrapper:
         vectors = [np.array(v, dtype=np.float32) for v in self._model.embed(texts)]
         return np.vstack(vectors)
 
-    def chat(self, messages: list[ChatMessage], temperature: float = 0.1) -> str:  # pragma: no cover
+    def chat(
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+    ) -> str:  # pragma: no cover
         raise RuntimeError("FastEmbedClientWrapper does not support chat()")
 
-    def chat_stream(self, messages: list[ChatMessage], temperature: float = 0.1) -> Iterator[str]:  # pragma: no cover
+    def chat_stream(
+        self,
+        messages: list[ChatMessage],
+        temperature: float = 0.1,
+        response_model: type[BaseModel] | None = None,
+    ) -> Iterator[str]:  # pragma: no cover
         raise RuntimeError("FastEmbedClientWrapper does not support chat_stream()")
 
 
