@@ -214,57 +214,85 @@ Make sure these match your indexing run:
 
 ---
 
-## Evaluation: synthetic eval set + runner (WIP)
+## Evaluation: product evals (WIP)
 
 NOTE: evaluation is a work in progress. Proceed with caution!
 
-This repo includes an eval framework designed for iterative RAG improvements:
+This repo includes a product-style eval workflow inspired by:
+- Label a small dataset of real input/output pairs (binary pass/fail).
+- Align LLM-as-a-judge against those human labels (one judge per dimension).
+- Run the same harness after each config change.
 
-- Quantitative questions: “net income”, “revenue”, “R&D”, etc. (regex-extracted “silver” answers + evidence snippets)
-- Qualitative questions: investing angles like R&D priorities, long-term vision, uncertainties, and competitive dynamics
-- Mixed questions: combine a numeric value with qualitative drivers
-
-### 1) Generate an eval set (JSONL)
+### 1) Generate eval queries (JSONL)
 
 ```bash
 python3 scripts/make_eval_set.py \
-  --data-dir ./data \
-  --out ./eval/eval_set.jsonl \
+  --ingest-output-dir ./data/sec_filings_md_v5/chunked_1024_128 \
+  --out ./eval/eval_queries.jsonl \
   --max-docs 200 \
-  --n-quant 30 --n-qual 30 --n-mixed 10 --n-series 5
+  --n-factual 50 \
+  --n-open-ended 50 \
+  --n-refusal 30 \
+  --n-distractor 30 \
+  --n-comparison 30
 ```
 
-Each JSONL line is a `finrag.eval.schema.EvalItem` with:
-- `question` (synthetic, human-reviewable)
-- `expected_numeric` and/or `expected_key_points` (optional “silver” ground truth)
-- `evidences` including `doc_id`, `chunk_id`, and a text `snippet`
-- `verification.status` (`unverified` by default) for human QA
+Each JSONL line is a `finrag.eval.schema.EvalQuery`:
+- `kind="factual"`: includes `expected_numeric` + a single “golden” chunk (`golden_evidence`) for retrieval + answer checks.
+  * Note that the golden chunk is likely not unique as there are likely multiple chunks within the same (or even different) SEC filing documents that contain the piece of factual information (eg a company's earnings per share in a specific quarter).
+  * Note also that there are issues with reliably parsing scale units (eg thousands vs milions vs billions) from chunks using only regex/rules.
+- `kind="open_ended"`: no ground truth; intended for human labeling + judge alignment.
+- `kind="refusal"`: out-of-scope / missing-context queries; the system should refuse/decline rather than hallucinate.
+- `kind="distractor"`: valid investment questions with distracting user context; the system should stay focused on the main question.
+- `kind="comparison"`: multi-company comparison questions; retrieval and answering should cover all mentioned companies.
 
-### 2) Run the eval
+### 2) Run the eval (generation)
 
-This will chunk + index the selected SEC filings, run retrieval (and optionally answer generation),
-and emit a JSON run file + a lightweight HTML report.
+This runs the same `RAGService.answer_question()` pipeline used by the app and stores retrieved chunks + answers.
 
 ```bash
-python3 scripts/run_eval.py \
-  --data-dir ./data \
-  --eval-set ./eval/eval_set.jsonl \
-  --out-dir ./results \
-  --max-docs 200 \
-  --no-reranker
+now=$(date +"%Y%m%d_%H%M%S")
+python3 -m scripts.run_eval \
+  --eval-queries ./eval/eval_queries.jsonl \
+  --out-dir ./eval/results/${now} \
+  --index-dir ./data/sec_filings_md_v5/chunked_1024_128 \
+  --mode normal \
+  --concurrency 8
 ```
 
-To include answer generation/scoring, pass `--do-answer` and configure an LLM provider:
+This creates a new run directory under `--out-dir` with:
+- `eval_queries.jsonl` (copied)
+- `generations.jsonl` (one record per query)
+- `run_config.json` + `generation_summary.json`
 
-- `LLM_PROVIDER=mistral` (requires `MISTRAL_API_KEY`)
-- `LLM_PROVIDER=openai` (requires `OPENAI_API_KEY`)
-
-For retrieval-only runs without chat, you can use local embeddings:
+### 3) Score the run (retrieval + answers + LLM judge)
 
 ```bash
-python3 scripts/run_eval.py ... --llm-provider fastembed --no-reranker
+python3 scripts/score_eval.py --run-dir ./results/eval_run.<...>
 ```
 
-Notes:
-- `CrossEncoderReranker` defaults to `cross-encoder/ms-marco-MiniLM-L-6-v2` and may need model files available locally; use `--no-reranker` if you can’t download.
-- The quantitative/qualitative “ground truth” is intentionally “silver” and meant to be verified/edited by a human before treating metrics as definitive.
+This writes `scores.jsonl`, `cases.jsonl` (merged records), `review.csv`, and `score_summary.json` into the run dir.
+
+If you want to skip LLM-as-a-judge and only compute deterministic metrics:
+
+```bash
+python3 scripts/score_eval.py --run-dir ./results/eval_run.<...> --no-judge
+```
+
+### 4) Human labels + judge alignment (open-ended)
+
+1) Open `review.csv` in the run directory and fill `human_label` with:
+- `0` = pass
+- `1` = fail
+
+2) Evaluate how well the judge matches your labels on a **dev** split (use this to iteratively tune the judge prompt):
+
+```bash
+python3 scripts/align_judge.py --run-dir ./results/eval_run.<...> --judge faithfulness_v1
+```
+
+When you're done tuning, run one final time with `--eval-test` to score the held-out test split:
+
+```bash
+python3 scripts/align_judge.py --run-dir ./results/eval_run.<...> --judge faithfulness_v1 --eval-test
+```
