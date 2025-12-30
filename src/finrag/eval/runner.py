@@ -1,168 +1,276 @@
-from __future__ import annotations
-
+import concurrent.futures
 import json
-import math
+import os
+import multiprocessing
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
-from finrag.dataclasses import ScoredChunk
-from finrag.eval.metrics import best_numeric_match, cited_doc_ids, coverage_at_k, keyword_coverage, mrr, recall_at_k
-from finrag.eval.schema import EvalItem
-from finrag.llm_clients import LLMClient
-from finrag.qa import answer_question_two_stage
-from finrag.retriever import CrossEncoderReranker, QdrantHybridRetriever, MilvusContextualRetriever, NoopReranker
+from finrag.dataclasses import TopChunk
+from finrag.generation_controls import AnswerStyle, GenerationSettings, resolve_generation_settings
+from finrag.eval.schema import EvalGeneration, EvalQuery, RetrievedChunk, EvalKind
+from finrag.main import RAGService
 
 
 @dataclass(frozen=True)
-class EvalConfig:
-    top_k_retrieve: int = 30
-    top_k_rerank: int = 8
-    do_answer: bool = False
-    draft_max_tokens: int = 900
-    final_max_tokens: int = 1500
+class RunConfig:
+    mode: str = "normal"
+
+    # Optional overrides (fall back to preset when None).
+    top_k_retrieve: int | None = None
+    top_k_rerank: int | None = None
+    draft_max_tokens: int | None = None
+    final_max_tokens: int | None = None
+    enable_rerank: bool | None = None
+    enable_refine: bool | None = None
+    answer_style: AnswerStyle | None = None
+    draft_temperature: float | None = None
+
+    # Parallelism. (Latency doesn't matter for offline eval runs.)
+    concurrency: int = 8
+
+    # Output controls.
+    max_chunks: int = 50
+    chunk_text_chars: int = 2000
+    chunk_context_chars: int = 2000
+
+    def resolved_settings(self) -> GenerationSettings:
+        return resolve_generation_settings(
+            mode=self.mode,
+            top_k_retrieve=self.top_k_retrieve,
+            top_k_rerank=self.top_k_rerank,
+            draft_max_tokens=self.draft_max_tokens,
+            final_max_tokens=self.final_max_tokens,
+            enable_rerank=self.enable_rerank,
+            enable_refine=self.enable_refine,
+            answer_style=self.answer_style,
+            draft_temperature=self.draft_temperature,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
-def _answer_question(llm: LLMClient, question: str, reranked: list[ScoredChunk], cfg: EvalConfig) -> tuple[str, str]:
-    return answer_question_two_stage(
-        llm,
-        question,
-        reranked,
-        draft_max_tokens=cfg.draft_max_tokens,
-        final_max_tokens=cfg.final_max_tokens,
-        temperature_draft=0.1,
+_WORKER_SERVICE: Any | None = None
+_WORKER_SETTINGS: GenerationSettings | None = None
+_WORKER_CFG: RunConfig | None = None
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _truncate(text: str | None, limit: int) -> str | None:
+    if text is None:
+        return None
+    s = str(text)
+    if limit <= 0 or len(s) <= limit:
+        return s
+    return s[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _to_retrieved_chunk(chunk: TopChunk, cfg: RunConfig) -> RetrievedChunk:
+    return RetrievedChunk(
+        chunk_id=chunk.chunk_id,
+        doc_id=chunk.doc_id,
+        page_no=chunk.page_no,
+        headings=list(chunk.headings or []),
+        score=float(chunk.score),
+        source=chunk.source,
+        preview=_truncate(chunk.preview, 400),
+        text=_truncate(chunk.text, cfg.chunk_text_chars),
+        context=_truncate(chunk.context, cfg.chunk_context_chars),
+        metadata=chunk.metadata,
     )
 
 
-def run_eval(
-    items: list[EvalItem],
+def _run_one(
+    service: RAGService,
+    query_id: str,
+    kind: EvalKind,
+    question: str,
+    settings: GenerationSettings,
+    cfg: RunConfig,
+) -> tuple[EvalGeneration, float, bool]:
+    t0 = time.perf_counter()
+    created = _utcnow()
+    try:
+        resp = service.answer_question(question, settings)
+        chunks = [_to_retrieved_chunk(tc, cfg) for tc in (resp.top_chunks or [])[: cfg.max_chunks]]
+        gen = EvalGeneration(
+            query_id=query_id,
+            kind=kind,
+            question=question,
+            created_at=created,
+            settings={
+                "mode": settings.mode,
+                "top_k_retrieve": settings.top_k_retrieve,
+                "top_k_rerank": settings.top_k_rerank,
+                "draft_max_tokens": settings.draft_max_tokens,
+                "final_max_tokens": settings.final_max_tokens,
+                "enable_rerank": settings.enable_rerank,
+                "enable_refine": settings.enable_refine,
+                "answer_style": settings.answer_style,
+                "draft_temperature": settings.draft_temperature,
+                "concurrency": max(1, int(cfg.concurrency)),
+            },
+            draft_answer=resp.draft_answer,
+            final_answer=resp.final_answer,
+            top_chunks=chunks,
+        )
+        ok = True
+    except Exception as exc:  # noqa: BLE001
+        gen = EvalGeneration(
+            query_id=query_id,
+            kind=kind,
+            question=question,
+            created_at=created,
+            settings={"mode": settings.mode, "concurrency": max(1, int(cfg.concurrency))},
+            error=str(exc),
+        )
+        ok = False
+    t1 = time.perf_counter()
+    ms = (t1 - t0) * 1000.0
+    gen.timing_ms["total_ms"] = ms
+    return gen, ms, ok
+
+
+def _worker_init(cfg_dict: dict[str, Any], storage_path: str | None) -> None:
+    global _WORKER_SERVICE, _WORKER_SETTINGS, _WORKER_CFG
+
+    if storage_path is not None:
+        os.environ["QDRANT_STORAGE_PATH"] = storage_path
+
+    cfg = RunConfig(**cfg_dict)
+    settings = cfg.resolved_settings()
+
+    import finrag.main as main
+
+    _WORKER_SERVICE = main.rag_service
+    _WORKER_SETTINGS = settings
+    _WORKER_CFG = cfg
+
+
+def _worker_run_one(query_id: str, kind: EvalKind, question: str) -> tuple[str, float, bool]:
+    if _WORKER_SERVICE is None or _WORKER_SETTINGS is None or _WORKER_CFG is None:  # pragma: no cover
+        raise RuntimeError("Worker not initialized")
+    gen, ms, ok = _run_one(_WORKER_SERVICE, query_id, kind, question, _WORKER_SETTINGS, _WORKER_CFG)
+    return gen.model_dump_json(), ms, ok
+
+
+def run_generation(
+    queries: Iterable[EvalQuery],
     *,
-    retriever: QdrantHybridRetriever | MilvusContextualRetriever,
-    reranker: CrossEncoderReranker | NoopReranker,
-    cfg: EvalConfig,
-    llm_for_answer: LLMClient | None = None,
+    out_jsonl: str | Path,
+    cfg: RunConfig,
+    storage_path: str | None = None,
 ) -> dict[str, Any]:
-    results: list[dict[str, Any]] = []
-    for item in items:
-        relevant_chunk_ids = {e.chunk_id for e in item.evidences if e.chunk_id}
-        relevant_doc_ids = {e.doc_id for e in item.evidences}
+    """
+    Run `EvalQuery`s through the app's `RAGService.answer_question()` pipeline and
+    write `EvalGeneration` JSONL.
+    """
+    p = Path(out_jsonl)
+    p.parent.mkdir(parents=True, exist_ok=True)
 
-        t0 = time.perf_counter()
-        hybrid = retriever.retrieve_hybrid(
-            item.question,
-            top_k_semantic=cfg.top_k_retrieve,
-            top_k_bm25=cfg.top_k_retrieve,
-            top_k_final=cfg.top_k_retrieve,
-        )
-        t1 = time.perf_counter()
-        reranked = reranker.rerank(
-            item.question, hybrid, top_k=cfg.top_k_rerank, candidate_text_provider=retriever.text_for_rerank
-        )
-        t2 = time.perf_counter()
+    # `finrag.main` constructs a global `rag_service` at import time.
+    # Reuse it here to avoid initializing the whole stack twice.
+    if storage_path is not None:
+        os.environ["QDRANT_STORAGE_PATH"] = storage_path
+    queries_list = list(queries)
+    query_specs: list[tuple[str, EvalKind, str]] = [(q.id, q.kind, q.question) for q in queries_list]
+    n = 0
+    n_ok = 0
+    n_err = 0
+    total_ms = 0.0
+    concurrency = max(1, int(cfg.concurrency))
+    wall_t0 = time.perf_counter()
 
-        hybrid_chunk_ids = [sc.chunk.id for sc in hybrid]
-        rerank_chunk_ids = [sc.chunk.id for sc in reranked]
-        hybrid_doc_ids = [sc.chunk.doc_id for sc in hybrid]
-        rerank_doc_ids = [sc.chunk.doc_id for sc in reranked]
+    if concurrency <= 1 or len(query_specs) <= 1:
+        import finrag.main as main
 
-        res: dict[str, Any] = {
-            "id": item.id,
-            "question": item.question,
-            "kind": item.kind,
-            "tags": item.tags,
-            "evidence_chunk_ids": sorted(relevant_chunk_ids),
-            "evidence_doc_ids": sorted(relevant_doc_ids),
-            "hybrid_chunk_ids": hybrid_chunk_ids,
-            "rerank_chunk_ids": rerank_chunk_ids,
-            "hybrid_doc_ids": hybrid_doc_ids,
-            "rerank_doc_ids": rerank_doc_ids,
-            "recall_hybrid_chunk": recall_at_k(hybrid_chunk_ids, set(relevant_chunk_ids), cfg.top_k_retrieve),
-            "recall_rerank_chunk": recall_at_k(rerank_chunk_ids, set(relevant_chunk_ids), cfg.top_k_rerank),
-            "recall_hybrid_doc": recall_at_k(hybrid_doc_ids, relevant_doc_ids, cfg.top_k_retrieve),
-            "recall_rerank_doc": recall_at_k(rerank_doc_ids, relevant_doc_ids, cfg.top_k_rerank),
-            "coverage_hybrid_chunk": coverage_at_k(hybrid_chunk_ids, set(relevant_chunk_ids), cfg.top_k_retrieve),
-            "coverage_rerank_chunk": coverage_at_k(rerank_chunk_ids, set(relevant_chunk_ids), cfg.top_k_rerank),
-            "coverage_hybrid_doc": coverage_at_k(hybrid_doc_ids, relevant_doc_ids, cfg.top_k_retrieve),
-            "coverage_rerank_doc": coverage_at_k(rerank_doc_ids, relevant_doc_ids, cfg.top_k_rerank),
-            "mrr_hybrid_chunk": mrr(hybrid_chunk_ids, set(relevant_chunk_ids)),
-            "mrr_rerank_chunk": mrr(rerank_chunk_ids, set(relevant_chunk_ids)),
-            "timing_ms": {"retrieve_ms": (t1 - t0) * 1000.0, "rerank_ms": (t2 - t1) * 1000.0},
-        }
+        service = main.rag_service
+        settings = cfg.resolved_settings()
+        with p.open("w", encoding="utf-8") as f:
+            for query_id, kind, question in query_specs:
+                gen, ms, ok = _run_one(service, query_id, kind, question, settings, cfg)
+                n += 1
+                total_ms += ms
+                if ok:
+                    n_ok += 1
+                else:
+                    n_err += 1
+                f.write(gen.model_dump_json())
+                f.write("\n")
+    else:
+        with p.open("w", encoding="utf-8") as f:
+            pending: dict[int, str] = {}
+            next_to_write = 0
 
-        if cfg.do_answer:
-            if llm_for_answer is None:
-                raise RuntimeError("cfg.do_answer=True requires llm_for_answer")
-            t3 = time.perf_counter()
-            draft, final = _answer_question(llm_for_answer, item.question, reranked, cfg)
-            t4 = time.perf_counter()
-            res["draft_answer"] = draft
-            res["final_answer"] = final
-            res["timing_ms"]["answer_ms"] = (t4 - t3) * 1000.0
+            mp_ctx = multiprocessing.get_context("spawn")
+            with concurrent.futures.ProcessPoolExecutor(
+                max_workers=min(concurrency, len(query_specs)),
+                mp_context=mp_ctx,
+                initializer=_worker_init,
+                initargs=(cfg.to_dict(), storage_path),
+            ) as ex:
+                fut_to_idx = {
+                    ex.submit(_worker_run_one, query_id, kind, question): i
+                    for i, (query_id, kind, question) in enumerate(query_specs)
+                }
 
-            res["citation_doc_ids"] = sorted(cited_doc_ids(final))
-            res["citation_hit"] = 1.0 if cited_doc_ids(final) & relevant_doc_ids else 0.0
+                for fut in concurrent.futures.as_completed(fut_to_idx):
+                    i = fut_to_idx[fut]
+                    query_id, kind, question = query_specs[i]
+                    try:
+                        line, ms, ok = fut.result()
+                    except Exception as exc:  # noqa: BLE001
+                        created = _utcnow()
+                        gen = EvalGeneration(
+                            query_id=query_id,
+                            kind=kind,
+                            question=question,
+                            created_at=created,
+                            settings={"mode": cfg.mode, "concurrency": concurrency},
+                            error=f"Worker failed: {exc}",
+                        )
+                        gen.timing_ms["total_ms"] = 0.0
+                        line, ms, ok = gen.model_dump_json(), 0.0, False
 
-            if item.expected_numeric and item.expected_numeric.value is not None:
-                nm = best_numeric_match(final, item.expected_numeric.value, expected_scale=item.expected_numeric.scale)
-                res["numeric_matched"] = nm["matched"]
-                res["numeric_best_rel_error"] = nm["best_rel_error"]
-                res["numeric_best_pred"] = nm["best_pred"]
+                    n += 1
+                    total_ms += ms
+                    if ok:
+                        n_ok += 1
+                    else:
+                        n_err += 1
 
-            if item.expected_key_points:
-                res["qual_keyword_coverage"] = keyword_coverage(final, item.expected_key_points)
+                    pending[i] = line
+                    while next_to_write in pending:
+                        f.write(pending.pop(next_to_write))
+                        f.write("\n")
+                        next_to_write += 1
 
-        results.append(res)
+            if pending:  # pragma: no cover
+                for i in sorted(pending):
+                    f.write(pending[i])
+                    f.write("\n")
 
-    summary = summarize_results(results)
-    return {"summary": summary, "results": results}
+    wall_t1 = time.perf_counter()
+    wall_total_ms = (wall_t1 - wall_t0) * 1000.0
 
-
-def _mean_ignore_nan(vals: list[float]) -> float:
-    cleaned = [v for v in vals if v is not None and not (isinstance(v, float) and math.isnan(v))]
-    if not cleaned:
-        return math.nan
-    return sum(cleaned) / len(cleaned)
-
-
-def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
-    recall_hybrid_chunk = _mean_ignore_nan([r["recall_hybrid_chunk"] for r in results])
-    recall_rerank_chunk = _mean_ignore_nan([r["recall_rerank_chunk"] for r in results])
-    recall_hybrid_doc = _mean_ignore_nan([r["recall_hybrid_doc"] for r in results])
-    recall_rerank_doc = _mean_ignore_nan([r["recall_rerank_doc"] for r in results])
-    mrr_hybrid_chunk = _mean_ignore_nan([r["mrr_hybrid_chunk"] for r in results])
-    mrr_rerank_chunk = _mean_ignore_nan([r["mrr_rerank_chunk"] for r in results])
-    coverage_hybrid_doc = _mean_ignore_nan([r["coverage_hybrid_doc"] for r in results])
-    coverage_rerank_doc = _mean_ignore_nan([r["coverage_rerank_doc"] for r in results])
-
-    summary: dict[str, Any] = {
-        "n": len(results),
-        "recall_hybrid_chunk": recall_hybrid_chunk,
-        "recall_rerank_chunk": recall_rerank_chunk,
-        "recall_hybrid_doc": recall_hybrid_doc,
-        "recall_rerank_doc": recall_rerank_doc,
-        "coverage_hybrid_doc": coverage_hybrid_doc,
-        "coverage_rerank_doc": coverage_rerank_doc,
-        "mrr_hybrid_chunk": mrr_hybrid_chunk,
-        "mrr_rerank_chunk": mrr_rerank_chunk,
+    summary = {
+        "n": n,
+        "n_ok": n_ok,
+        "n_err": n_err,
+        "avg_total_ms": (total_ms / n) if n else 0.0,
+        "wall_total_ms": wall_total_ms,
+        "settings": cfg.to_dict(),
     }
-
-    if any("numeric_matched" in r for r in results):
-        matched = [1.0 if r.get("numeric_matched") else 0.0 for r in results if "numeric_matched" in r]
-        summary["numeric_accuracy"] = _mean_ignore_nan(matched)
-
-    if any("citation_hit" in r for r in results):
-        hits = [r.get("citation_hit", 0.0) for r in results if "citation_hit" in r]
-        summary["citation_hit_rate"] = _mean_ignore_nan(hits)
-
-    if any("qual_keyword_coverage" in r for r in results):
-        covs = [r.get("qual_keyword_coverage") for r in results if "qual_keyword_coverage" in r]
-        summary["qual_keyword_coverage"] = _mean_ignore_nan([c for c in covs if c is not None])
-
     return summary
 
 
-def save_run(run: dict[str, Any], out_path: str | Path) -> None:
-    p = Path(out_path)
+def save_json(data: dict[str, Any], path: str | Path) -> None:
+    p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(run, ensure_ascii=False, indent=2), encoding="utf-8")
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
