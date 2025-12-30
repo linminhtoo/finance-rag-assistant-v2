@@ -56,6 +56,7 @@ def _expected_numeric_text(query: EvalQuery) -> str | None:
         bits.append(f"raw={n.raw.strip()}")
     return ", ".join(bits)
 
+
 _REFUSAL_HINT_RE = re.compile(
     r"(?i)\b(can(?:not|'t)\s+answer|cannot\s+answer|insufficient\s+information|"
     r"not\s+enough\s+information|not\s+provided\s+in\s+the\s+context|"
@@ -139,7 +140,9 @@ def score_one(
         expected = query.factual.expected_numeric
         nm = best_numeric_match(final, expected.value, expected_scale=expected.scale)
         score.answer["numeric_matched"] = bool(nm["matched"])
-        score.answer["numeric_best_rel_error"] = float(nm["best_rel_error"]) if nm["best_rel_error"] is not None else None
+        score.answer["numeric_best_rel_error"] = (
+            float(nm["best_rel_error"]) if nm["best_rel_error"] is not None else None
+        )
         score.answer["numeric_best_pred"] = nm["best_pred"]
 
         cited = cited_doc_ids(final)
@@ -179,10 +182,7 @@ def score_one(
                 out, raw = run_judge(judge_llm, js, question=query.question, answer=final, context=ctx)
                 score.judges.append(
                     JudgeResult(
-                        judge_id=js.judge_id,
-                        prediction=out.prediction,
-                        explanation=out.explanation_sketchpad,
-                        raw=raw,
+                        judge_id=js.judge_id, prediction=out.prediction, explanation=out.explanation_sketchpad, raw=raw
                     )
                 )
 
@@ -200,16 +200,15 @@ def score_one(
                 out, raw = run_judge(judge_llm, js, question=query.question, answer=final, context=ctx, notes=notes)
                 score.judges.append(
                     JudgeResult(
-                        judge_id=js.judge_id,
-                        prediction=out.prediction,
-                        explanation=out.explanation_sketchpad,
-                        raw=raw,
+                        judge_id=js.judge_id, prediction=out.prediction, explanation=out.explanation_sketchpad, raw=raw
                     )
                 )
 
     if query.kind == "distractor" and query.distractor is not None:
         if query.distractor.target_tickers:
-            score.answer["mentions_target_ticker"] = any(_mentions_token(final, t) for t in query.distractor.target_tickers)
+            score.answer["mentions_target_ticker"] = any(
+                _mentions_token(final, t) for t in query.distractor.target_tickers
+            )
         if judge_llm is not None:
             ctx = build_context(top_chunks, max_chars=judge_context_chars)
             spec = get_judge_spec(query.distractor.rubric_id or "focus_v1")
@@ -222,10 +221,7 @@ def score_one(
                 out, raw = run_judge(judge_llm, js, question=query.question, answer=final, context=ctx, notes=notes)
                 score.judges.append(
                     JudgeResult(
-                        judge_id=js.judge_id,
-                        prediction=out.prediction,
-                        explanation=out.explanation_sketchpad,
-                        raw=raw,
+                        judge_id=js.judge_id, prediction=out.prediction, explanation=out.explanation_sketchpad, raw=raw
                     )
                 )
 
@@ -245,10 +241,7 @@ def score_one(
                 out, raw = run_judge(judge_llm, js, question=query.question, answer=final, context=ctx, notes=notes)
                 score.judges.append(
                     JudgeResult(
-                        judge_id=js.judge_id,
-                        prediction=out.prediction,
-                        explanation=out.explanation_sketchpad,
-                        raw=raw,
+                        judge_id=js.judge_id, prediction=out.prediction, explanation=out.explanation_sketchpad, raw=raw
                     )
                 )
 

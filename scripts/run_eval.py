@@ -27,10 +27,7 @@ def main() -> None:
     ap.add_argument("--run-name", default=None, help="Optional run name prefix (e.g. 'baseline').")
     ap.add_argument("--mode", default="normal", help="Generation preset (quick|normal|thinking).")
     ap.add_argument(
-        "--concurrency",
-        type=int,
-        default=8,
-        help="Max parallel questions to run (process-based; set 1 to disable).",
+        "--concurrency", type=int, default=8, help="Max parallel questions to run (process-based; set 1 to disable)."
     )
 
     # Convenience: point the runner at an existing Milvus Lite + BM25 snapshot dir

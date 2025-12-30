@@ -3,6 +3,8 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/_env.sh"
 
+# TODO: export same env vars as launch_app.sh
+
 now=$(date +"%Y%m%d_%H%M%S")
 mkdir -p logs/
 python3 -m scripts.run_eval \

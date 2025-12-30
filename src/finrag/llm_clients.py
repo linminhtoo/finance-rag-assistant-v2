@@ -26,17 +26,11 @@ class LLMClient(Protocol):
     def embed_texts(self, texts: list[str]) -> np.ndarray: ...
 
     def chat(
-        self,
-        messages: list[ChatMessage],
-        temperature: float = 0.1,
-        response_model: type[BaseModel] | None = None,
+        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
     ) -> str: ...
 
     def chat_stream(
-        self,
-        messages: list[ChatMessage],
-        temperature: float = 0.1,
-        response_model: type[BaseModel] | None = None,
+        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
     ) -> Iterator[str]: ...
 
 
@@ -56,24 +50,11 @@ def _build_response_format(*, provider: Literal["mistral", "openai"], response_m
     if provider == "mistral":
         return cast(
             MistralResponseFormatTypedDict,
-            {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": schema_name,
-                    "schema_definition": schema,
-                },
-            },
+            {"type": "json_schema", "json_schema": {"name": schema_name, "schema_definition": schema}},
         )
     if provider == "openai":
         return cast(
-            OpenAIResponseFormat,
-            {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": schema_name,
-                    "schema": schema,
-                },
-            },
+            OpenAIResponseFormat, {"type": "json_schema", "json_schema": {"name": schema_name, "schema": schema}}
         )
     raise ValueError(f"Unsupported provider for response_format: {provider}")
 
@@ -98,10 +79,7 @@ class MistralClientWrapper:
         return np.vstack(vectors)
 
     def chat(
-        self,
-        messages: list[ChatMessage],
-        temperature: float = 0.1,
-        response_model: type[BaseModel] | None = None,
+        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
     ) -> str:
         mistral_messages = [cast(MessagesTypedDict, msg) for msg in messages]
         response_format: MistralResponseFormatTypedDict | None = (
@@ -120,10 +98,7 @@ class MistralClientWrapper:
             raise RuntimeError(f"Failed to get chat response: {e}") from e
 
     def chat_stream(
-        self,
-        messages: list[ChatMessage],
-        temperature: float = 0.1,
-        response_model: type[BaseModel] | None = None,
+        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
     ) -> Iterator[str]:
         mistral_messages = [cast(MessagesTypedDict, msg) for msg in messages]
         response_format: MistralResponseFormatTypedDict | None = (
@@ -175,14 +150,13 @@ class OpenAIClientWrapper:
         return np.vstack(vectors)
 
     def chat(
-        self,
-        messages: list[ChatMessage],
-        temperature: float = 0.1,
-        response_model: type[BaseModel] | None = None,
+        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
     ) -> str:
         oa_messages: list[ChatCompletionMessageParam] = [cast(ChatCompletionMessageParam, msg) for msg in messages]
         if response_model is None:
-            res = self.client.chat.completions.create(model=self.chat_model, messages=oa_messages, temperature=temperature)
+            res = self.client.chat.completions.create(
+                model=self.chat_model, messages=oa_messages, temperature=temperature
+            )
         else:
             response_format = _build_response_format(provider="openai", response_model=response_model)
             res = self.client.chat.completions.create(
@@ -197,10 +171,7 @@ class OpenAIClientWrapper:
             raise RuntimeError(f"Failed to get OpenAI chat response: {e}") from e
 
     def chat_stream(
-        self,
-        messages: list[ChatMessage],
-        temperature: float = 0.1,
-        response_model: type[BaseModel] | None = None,
+        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
     ) -> Iterator[str]:
         oa_messages: list[ChatCompletionMessageParam] = [cast(ChatCompletionMessageParam, msg) for msg in messages]
         if response_model is None:
@@ -246,18 +217,12 @@ class FastEmbedClientWrapper:
         return np.vstack(vectors)
 
     def chat(
-        self,
-        messages: list[ChatMessage],
-        temperature: float = 0.1,
-        response_model: type[BaseModel] | None = None,
+        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
     ) -> str:  # pragma: no cover
         raise RuntimeError("FastEmbedClientWrapper does not support chat()")
 
     def chat_stream(
-        self,
-        messages: list[ChatMessage],
-        temperature: float = 0.1,
-        response_model: type[BaseModel] | None = None,
+        self, messages: list[ChatMessage], temperature: float = 0.1, response_model: type[BaseModel] | None = None
     ) -> Iterator[str]:  # pragma: no cover
         raise RuntimeError("FastEmbedClientWrapper does not support chat_stream()")
 

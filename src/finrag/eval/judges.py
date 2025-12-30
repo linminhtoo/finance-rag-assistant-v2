@@ -112,10 +112,7 @@ def get_judge_spec(judge_id: str) -> JudgeSpec:
 
 
 def get_judge_client(
-    *,
-    provider: str | None = None,
-    chat_model: str | None = None,
-    base_url: str | None = None,
+    *, provider: str | None = None, chat_model: str | None = None, base_url: str | None = None
 ) -> LLMClient:
     """
     Create an LLM client for judging.
@@ -201,10 +198,7 @@ def run_judge(
         parts.insert(insert_at, f"Evidence excerpt:\n{evidence.strip()}\n")
 
     user = "\n".join(parts).strip()
-    messages: list[ChatMessage] = [
-        {"role": "system", "content": spec.system_prompt},
-        {"role": "user", "content": user},
-    ]
+    messages: list[ChatMessage] = [{"role": "system", "content": spec.system_prompt}, {"role": "user", "content": user}]
     raw = llm.chat(messages, temperature=spec.temperature, response_model=JudgeOutput)
     try:
         obj = _extract_json_object(raw)

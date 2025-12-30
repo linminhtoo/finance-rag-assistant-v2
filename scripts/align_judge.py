@@ -8,13 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
-from sklearn.metrics import (
-    cohen_kappa_score,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-)
+from sklearn.metrics import cohen_kappa_score, confusion_matrix, f1_score, precision_score, recall_score
 from sklearn.model_selection import train_test_split
 
 from finrag.eval.io import load_jsonl
@@ -146,11 +140,7 @@ def main() -> None:
     # Dev/test split (stratified when possible).
     try:
         dev_ids, test_ids, dev_y, test_y = train_test_split(
-            ids,
-            y,
-            train_size=float(args.dev_fraction),
-            random_state=int(args.seed),
-            stratify=y,
+            ids, y, train_size=float(args.dev_fraction), random_state=int(args.seed), stratify=y
         )
     except Exception:
         dev_ids, test_ids, dev_y, test_y = train_test_split(

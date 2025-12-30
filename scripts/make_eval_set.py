@@ -20,9 +20,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(
-        description="Generate an eval query set from chunk exports (JSONL)."
-    )
+    ap = argparse.ArgumentParser(description="Generate an eval query set from chunk exports (JSONL).")
     ap.add_argument(
         "--ingest-output-dir",
         required=True,
@@ -57,21 +55,11 @@ def main() -> None:
         max_docs=args.max_docs,
         max_chunks_per_doc=args.max_chunks_per_doc,
     )
-    factual = generate_factual_queries(
-        chunks_iter,
-        n=args.n_factual,
-        seed=args.seed,
-        snippet_chars=args.snippet_chars,
-    )
+    factual = generate_factual_queries(chunks_iter, n=args.n_factual, seed=args.seed, snippet_chars=args.snippet_chars)
     logger.success(f"Generated {len(factual)} factual questions.")
 
     docs_iter = list(
-        iter_chunk_export_docs(
-            args.ingest_output_dir,
-            tickers=args.tickers,
-            forms=args.forms,
-            max_docs=args.max_docs,
-        )
+        iter_chunk_export_docs(args.ingest_output_dir, tickers=args.tickers, forms=args.forms, max_docs=args.max_docs)
     )
     doc_dicts = [
         {"ticker": d.ticker, "year": d.year, "company": d.company}
@@ -80,32 +68,16 @@ def main() -> None:
     ]
     logger.debug(f"Prepared {len(doc_dicts)} document dicts for query generation.")
 
-    open_ended = generate_open_ended_queries(
-        doc_dicts,
-        n=args.n_open_ended,
-        seed=args.seed,
-    )
+    open_ended = generate_open_ended_queries(doc_dicts, n=args.n_open_ended, seed=args.seed)
     logger.success(f"Generated {len(open_ended)} open-ended questions.")
 
-    refusal = generate_refusal_queries(
-        doc_dicts,
-        n=args.n_refusal,
-        seed=args.seed,
-    )
+    refusal = generate_refusal_queries(doc_dicts, n=args.n_refusal, seed=args.seed)
     logger.success(f"Generated {len(refusal)} refusal questions.")
 
-    distractor = generate_distractor_queries(
-        doc_dicts,
-        n=args.n_distractor,
-        seed=args.seed,
-    )
+    distractor = generate_distractor_queries(doc_dicts, n=args.n_distractor, seed=args.seed)
     logger.success(f"Generated {len(distractor)} distractor questions.")
 
-    comparison = generate_comparison_queries(
-        doc_dicts,
-        n=args.n_comparison,
-        seed=args.seed,
-    )
+    comparison = generate_comparison_queries(doc_dicts, n=args.n_comparison, seed=args.seed)
     logger.success(f"Generated {len(comparison)} comparison questions.")
 
     items = [*factual, *open_ended, *refusal, *distractor, *comparison]

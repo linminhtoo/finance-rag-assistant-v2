@@ -84,8 +84,10 @@ def main() -> None:
     if not queries:
         raise SystemExit("No items to score (check --kinds/--max-items).")
 
-    judge_llm = None if args.no_judge else get_judge_client(
-        provider=args.judge_provider, chat_model=args.judge_model, base_url=args.judge_base_url
+    judge_llm = (
+        None
+        if args.no_judge
+        else get_judge_client(provider=args.judge_provider, chat_model=args.judge_model, base_url=args.judge_base_url)
     )
 
     scores = [

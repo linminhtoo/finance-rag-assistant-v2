@@ -28,6 +28,8 @@ class EvidenceChunk(BaseModel):
 
 
 ScaleUnits = Literal["units", "thousands", "millions", "billions"]
+
+
 class NumericAnswer(BaseModel):
     """
     Numeric ground truth for factual questions.
@@ -51,13 +53,7 @@ class OpenEndedSpec(BaseModel):
     target_year: int | None = None
 
 
-RefusalReason = Literal[
-    "non_investment",
-    "unknown_company",
-    "prompt_injection",
-    "harmful_or_toxic",
-    "other",
-]
+RefusalReason = Literal["non_investment", "unknown_company", "prompt_injection", "harmful_or_toxic", "other"]
 
 
 class RefusalSpec(BaseModel):

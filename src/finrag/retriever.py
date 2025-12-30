@@ -1010,7 +1010,7 @@ class CrossEncoderReranker:
 
     TODO:
     Implement OpenAI API based reranker as an alternative.
-    This will enable more robust concurrency patterns as we will be making API calls 
+    This will enable more robust concurrency patterns as we will be making API calls
     rather than pytorch model inferences on local GPUs.
     """
 

@@ -87,12 +87,7 @@ def _to_retrieved_chunk(chunk: TopChunk, cfg: RunConfig) -> RetrievedChunk:
 
 
 def _run_one(
-    service: RAGService,
-    query_id: str,
-    kind: EvalKind,
-    question: str,
-    settings: GenerationSettings,
-    cfg: RunConfig,
+    service: RAGService, query_id: str, kind: EvalKind, question: str, settings: GenerationSettings, cfg: RunConfig
 ) -> tuple[EvalGeneration, float, bool]:
     t0 = time.perf_counter()
     created = _utcnow()
@@ -161,11 +156,7 @@ def _worker_run_one(query_id: str, kind: EvalKind, question: str) -> tuple[str, 
 
 
 def run_generation(
-    queries: Iterable[EvalQuery],
-    *,
-    out_jsonl: str | Path,
-    cfg: RunConfig,
-    storage_path: str | None = None,
+    queries: Iterable[EvalQuery], *, out_jsonl: str | Path, cfg: RunConfig, storage_path: str | None = None
 ) -> dict[str, Any]:
     """
     Run `EvalQuery`s through the app's `RAGService.answer_question()` pipeline and

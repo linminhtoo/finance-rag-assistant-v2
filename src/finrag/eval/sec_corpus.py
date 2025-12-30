@@ -41,12 +41,7 @@ def _parse_doc_from_source(source: str | None, relpath: str | None) -> dict[str,
         year = int(filing_date.split("-", 1)[0])
     except Exception:
         year = None
-    return {
-        "ticker": ticker,
-        "filing_type": filing_type,
-        "filing_date": filing_date,
-        "year": year,
-    }
+    return {"ticker": ticker, "filing_type": filing_type, "filing_date": filing_date, "year": year}
 
 
 def _resolve_chunks_path(ingest_output_dir: Path, chunks_path: str) -> Path:
@@ -184,4 +179,3 @@ def iter_all_chunks(
     """
     for doc in iter_chunk_export_docs(ingest_output_dir, tickers=tickers, forms=forms, max_docs=max_docs):
         yield from iter_doc_chunks(doc.chunks_path, max_chunks=max_chunks_per_doc)
-

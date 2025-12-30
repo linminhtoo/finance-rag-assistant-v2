@@ -229,11 +229,7 @@ _K = TypeVar("_K", bound=Hashable)
 
 
 def _round_robin_unique_template_assignments(
-    keys: list[_K],
-    *,
-    n: int,
-    num_templates: int,
-    rng: random.Random,
+    keys: list[_K], *, n: int, num_templates: int, rng: random.Random
 ) -> list[tuple[_K, int]]:
     """
     Return (key, template_idx) pairs, distributed across keys, without repeating
@@ -288,12 +284,7 @@ def _infer_period_end_date(chunks: list[DocChunk], *, scan_chunks: int = 40, sca
 
 
 def generate_factual_queries(
-    chunks: Iterable[DocChunk],
-    *,
-    n: int,
-    seed: int = 0,
-    max_pairs_per_chunk: int = 2,
-    snippet_chars: int = 1200,
+    chunks: Iterable[DocChunk], *, n: int, seed: int = 0, max_pairs_per_chunk: int = 2, snippet_chars: int = 1200
 ) -> list[EvalQuery]:
     """
     Generate factual questions with numeric ground truth linked to a single "gold" chunk.
@@ -387,12 +378,7 @@ _OPEN_ENDED_TEMPLATES: list[str] = [
 ]
 
 
-def generate_open_ended_queries(
-    docs: Iterable[dict[str, Any]],
-    *,
-    n: int,
-    seed: int = 0,
-) -> list[EvalQuery]:
+def generate_open_ended_queries(docs: Iterable[dict[str, Any]], *, n: int, seed: int = 0) -> list[EvalQuery]:
     """
     Generate open-ended questions (no ground truth).
     """
@@ -413,12 +399,7 @@ def generate_open_ended_queries(
             f"without repeating templates per (ticker, year). Returning {max_unique}."
         )
 
-    assignments = _round_robin_unique_template_assignments(
-        keys,
-        n=n,
-        num_templates=len(_OPEN_ENDED_TEMPLATES),
-        rng=rng,
-    )
+    assignments = _round_robin_unique_template_assignments(keys, n=n, num_templates=len(_OPEN_ENDED_TEMPLATES), rng=rng)
     out: list[EvalQuery] = []
     for (ticker, year), tmpl_idx in assignments:
         company = targets[(ticker, year)]
@@ -475,11 +456,7 @@ _UNKNOWN_COMPANY_CANDIDATES: list[tuple[str, str]] = [
 
 
 def generate_refusal_queries(
-    docs: Iterable[dict[str, Any]],
-    *,
-    n: int,
-    seed: int = 0,
-    max_known_tickers_sample: int = 12,
+    docs: Iterable[dict[str, Any]], *, n: int, seed: int = 0, max_known_tickers_sample: int = 12
 ) -> list[EvalQuery]:
     """
     Generate out-of-scope / refusal queries.
@@ -505,14 +482,24 @@ def generate_refusal_queries(
     pool: list[tuple[str, RefusalSpec, list[str]]] = []
 
     for q in _REFUSAL_NON_INVESTMENT:
-        pool.append((q, RefusalSpec(reason="non_investment", known_tickers_sample=known_sample), ["refusal", "non_investment"]))
+        pool.append(
+            (q, RefusalSpec(reason="non_investment", known_tickers_sample=known_sample), ["refusal", "non_investment"])
+        )
     for q in _REFUSAL_PROMPT_INJECTION:
         pool.append(
-            (q, RefusalSpec(reason="prompt_injection", known_tickers_sample=known_sample), ["refusal", "prompt_injection"])
+            (
+                q,
+                RefusalSpec(reason="prompt_injection", known_tickers_sample=known_sample),
+                ["refusal", "prompt_injection"],
+            )
         )
     for q in _REFUSAL_HARMFUL_OR_TOXIC:
         pool.append(
-            (q, RefusalSpec(reason="harmful_or_toxic", known_tickers_sample=known_sample), ["refusal", "harmful_or_toxic"])
+            (
+                q,
+                RefusalSpec(reason="harmful_or_toxic", known_tickers_sample=known_sample),
+                ["refusal", "harmful_or_toxic"],
+            )
         )
 
     # Unknown-company refusal queries.
@@ -568,12 +555,7 @@ _DISTRACTOR_POOL: list[tuple[str, str]] = [
 ]
 
 
-def generate_distractor_queries(
-    docs: Iterable[dict[str, Any]],
-    *,
-    n: int,
-    seed: int = 0,
-) -> list[EvalQuery]:
+def generate_distractor_queries(docs: Iterable[dict[str, Any]], *, n: int, seed: int = 0) -> list[EvalQuery]:
     """
     Generate valid questions that contain distracting user-provided information.
     """
@@ -592,12 +574,7 @@ def generate_distractor_queries(
             f"without repeating main-question templates per (ticker, year). Returning {max_unique}."
         )
 
-    assignments = _round_robin_unique_template_assignments(
-        keys,
-        n=n,
-        num_templates=len(_OPEN_ENDED_TEMPLATES),
-        rng=rng,
-    )
+    assignments = _round_robin_unique_template_assignments(keys, n=n, num_templates=len(_OPEN_ENDED_TEMPLATES), rng=rng)
 
     out: list[EvalQuery] = []
     for (ticker, year), tmpl_idx in assignments:
@@ -639,12 +616,7 @@ _COMPARISON_TEMPLATES: list[str] = [
 
 
 def generate_comparison_queries(
-    docs: Iterable[dict[str, Any]],
-    *,
-    n: int,
-    seed: int = 0,
-    min_companies: int = 2,
-    max_companies: int = 2,
+    docs: Iterable[dict[str, Any]], *, n: int, seed: int = 0, min_companies: int = 2, max_companies: int = 2
 ) -> list[EvalQuery]:
     """
     Generate questions that compare 2+ specific companies.

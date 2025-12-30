@@ -250,7 +250,10 @@ Each JSONL line is a `finrag.eval.schema.EvalQuery`:
 
 This runs the same `RAGService.answer_question()` pipeline used by the app and stores retrieved chunks + answers.
 
+NOTE: please export the same environment variables as `scripts/launch_app.sh`.
+
 ```bash
+# NOTE: PLEASE EXPORT ADDITIONAL ENV VARS AS PER scripts/launch_app.sh on top of .env
 now=$(date +"%Y%m%d_%H%M%S")
 python3 -m scripts.run_eval \
   --eval-queries ./eval/eval_queries.jsonl \

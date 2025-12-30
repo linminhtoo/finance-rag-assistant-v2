@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
 
+
 def _json_default(obj):  # type: ignore[no-untyped-def]
     if isinstance(obj, Path):
         return str(obj)
