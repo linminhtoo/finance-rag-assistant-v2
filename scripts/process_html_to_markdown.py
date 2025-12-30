@@ -240,6 +240,10 @@ class CustomOpenAIService(BaseOpenAIService):
                 # that we can POST an abort to vLLM if vLLM is not cancelling on its own
                 # however, based on testing, vLLM does cancel requests immediately once python process is killed
                 # (not just ctrl+C but kill -9)
+                # TODO: try guided JSON to further robustify the structured output
+                # however, this might be a strictly vLLM feature which is not available on actual OpenAI API
+                # hence, it may restrict usability
+                # extra_body={"guided_json": response_schema.model_json_schema()},
                 response = client.chat.completions.parse(
                     model=model,
                     messages=messages,
@@ -247,10 +251,6 @@ class CustomOpenAIService(BaseOpenAIService):
                     response_format=response_schema,
                     temperature=temperature,
                     extra_headers=request_headers,
-                    # TODO: try guided JSON to further robustify the structured output
-                    # however, this might be a strictly vLLM feature which is not available on actual OpenAI API
-                    # hence, it may restrict usability
-                    # extra_body={"guided_json": response_schema.model_json_schema()},
                 )
                 response_text = response.choices[0].message.content
                 if response_text is None:
