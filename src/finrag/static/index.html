@@ -751,7 +751,7 @@
       const ticker = String(doc.ticker || '').trim().toUpperCase();
       const yq = normalizeYearQuarter(doc.filing_quarter || doc.period_end_date || doc.filing_date);
       const form = normalizeFilingType(doc.filing_type);
-      if (ticker && yq && form) return `[${ticker} ${yq} ${form}]`;
+      if (ticker && yq && form) return `${ticker} ${yq} ${form}`;
       return '';
     }
 
